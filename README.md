@@ -32,7 +32,7 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
 
 *Ajustes → Importar historias de Word*: se eligen todos los `.docx` juntos. El nombre del archivo (por ejemplo `245.docx`)
 pasa a ser el N° de historia y el contenido completo queda en la ficha como «Historia anterior». Se intentan reconocer
-nombre, fecha de nacimiento, DNI, obra social, teléfono y alergias; lo que no se reconozca se completa a mano.
+nombre, fecha de nacimiento y obra social (con o sin etiquetas como «Nombre:», «FN:», «OS:»); lo que no se reconozca se completa a mano.
 Los `.doc` antiguos hay que guardarlos antes como `.docx`.
 
 ## Probar sin Dropbox

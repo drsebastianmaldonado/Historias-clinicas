@@ -764,23 +764,41 @@ function fechaDesdeTexto(d, m, a) {
   return `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-// Saca los datos básicos que se reconozcan en el texto; lo demás queda en la historia importada.
+// Las historias en Word tienen nombre, fecha de nacimiento y obra social; el resto queda en la historia importada.
+const ETQ_NOMBRE = /^(?:apellido\s*y\s*nombres?|nombre\s*y\s*apellidos?|paciente|nombres?)\s*[:.\-–]?\s*(.*)$/i;
+const ETQ_NAC = /(?:fecha\s*de\s*nac(?:imiento)?|f\.?\s*(?:de\s*)?nac\.?|f\.?\s*n\.?)\s*[:.\-–]?\s*(.*)$/i;
+const ETQ_OS = /(?:obra\s*social|\bo\.?\s?s\.?(?=\s*[:\-–])|prepaga|cobertura)\s*[:.\-–]?\s*(.*)$/i;
+const CORTE = /[\s\-–,]+(?:edad\b|fecha\s*de\s*nac|f\.?\s*(?:de\s*)?nac|f\.?\s*n\.?\s*[:\-]|obra\s*social|o\.?\s?s\.?\s*[:\-]|prepaga|dni\b|d\.n\.i).*$/i;
+const FECHA = /(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})/;
+
 function extraerDatos(texto) {
   const lineas = texto.split(/\n/).map(l => l.trim()).filter(Boolean);
-  const buscar = re => { for (const l of lineas) { const m = l.match(re); if (m) return m; } return null; };
+  const cabecera = lineas.slice(0, 8);
+  // Busca «Etiqueta: valor»; si el valor está en la línea siguiente (celdas de una tabla), lo toma de ahí.
+  const buscar = (re, lista = lineas) => {
+    for (let i = 0; i < lista.length; i++) {
+      const m = lista[i].match(re);
+      if (m) return (m[1] || '').trim() || (lista[i + 1] || '');
+    }
+    return '';
+  };
   const d = {};
-  const sep = '\\s*[:.\\-–]\\s*';
-  let m;
-  if ((m = buscar(new RegExp('^(?:apellido\\s*y\\s*nombres?|nombre\\s*y\\s*apellidos?|paciente|nombres?)' + sep + '(.+)$', 'i')))) {
-    const nom = m[1].replace(/\s+(edad|fecha|f\.?\s*nac|dni|d\.n\.i)\b.*$/i, '').trim();
-    const partes = nom.split(/\s*,\s*/);
-    if (partes.length >= 2) { d.apellido = partes[0]; d.nombre = partes.slice(1).join(' '); } else d.apellido = nom;
+
+  let nombre = buscar(ETQ_NOMBRE, cabecera).replace(CORTE, '').trim();
+  // Sin etiqueta: la primera línea de la cabecera sin números se toma como nombre.
+  if (!nombre) nombre = cabecera.map(l => l.replace(CORTE, '').trim()).find(l => l && !/\d/.test(l) && l.length <= 60 && !ETQ_OS.test(l) && !/historia/i.test(l)) || '';
+  nombre = nombre.replace(/[:.\s]+$/, '');
+  if (nombre) {
+    const partes = nombre.split(/\s*,\s*/);
+    if (partes.length >= 2) { d.apellido = partes[0]; d.nombre = partes.slice(1).join(' '); } else d.apellido = nombre;
   }
-  if ((m = buscar(/(?:fecha\s*de\s*nac(?:imiento)?|f\.?\s*(?:de\s*)?nac\.?|fn)\s*[:.\-]?\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/i))) d.fechaNac = fechaDesdeTexto(m[1], m[2], m[3]);
-  if ((m = buscar(/\bd\.?\s*n\.?\s*i\.?\s*(?:n[°º]?)?\s*[:.\-]?\s*(\d[\d.\s]{5,12}\d)/i))) d.dni = m[1].replace(/\D/g, '');
-  if ((m = buscar(/\b(?:obra\s*social|o\.\s*s\.|prepaga|cobertura)\s*[:\-]\s*(.+)$/i))) d.obraSocial = m[1].trim();
-  if ((m = buscar(/\b(?:tel(?:[eé]fono)?|cel(?:ular)?)\.?\s*[:\-]\s*([\d\s()+\-]{6,})/i))) d.telefono = m[1].trim();
-  if ((m = buscar(/\balergi(?:a|as)\s*[:\-]\s*(.+)$/i))) d.alergias = m[1].trim();
+
+  let m = buscar(ETQ_NAC, cabecera).match(FECHA) || cabecera.map(l => l.match(FECHA)).find(Boolean);
+  if (m) d.fechaNac = fechaDesdeTexto(m[1], m[2], m[3]);
+
+  const os = buscar(ETQ_OS, cabecera).replace(CORTE, '').trim();
+  if (os) d.obraSocial = os;
+
   for (const k of Object.keys(d)) if (!d[k]) delete d[k];
   return d;
 }
@@ -836,7 +854,7 @@ async function importarWord(archivos) {
   zona.innerHTML = `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
     ${errores.length ? `<details><summary>Ver archivos con problemas</summary><ul class="chico">${errores.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}
     ${S.pendiente ? '<p class="error-texto">Ojo: no se pudo guardar en Dropbox. Revisá el aviso de arriba.</p>' : ''}
-    <p class="chico suave">Revisá algunas fichas: los datos que no se reconocieron automáticamente (nombre, fecha de nacimiento, etc.) se pueden completar con «Editar datos».</p>`;
+    <p class="chico suave">Revisá algunas fichas: los datos que no se reconocieron automáticamente (nombre, fecha de nacimiento u obra social) se pueden completar con «Editar datos».</p>`;
 }
 
 // ---------- Acciones ----------
