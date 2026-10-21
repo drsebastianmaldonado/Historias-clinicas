@@ -691,10 +691,10 @@ function vistaAjustes() {
 
   ${ro ? '' : `<div class="tarjeta">
     <h2>Importar historias de Word</h2>
-    <p class="chico">Seleccioná los archivos de Word, <b>.doc</b> o <b>.docx</b> (podés elegir todos juntos). El nombre de cada archivo se toma como N° de historia
+    <p class="chico">Seleccioná los archivos de Word (<b>.doc</b>, <b>.docx</b>) o de LibreOffice (<b>.odt</b>); podés elegir todos juntos. El nombre de cada archivo se toma como N° de historia
       y cada consulta con fecha pasa a ser una evolución; el Word completo queda en «Historia original completa». Si un N° ya existe, se actualiza lo que vino del Word sin tocar lo cargado en la app.</p>
     <div class="acciones">
-      <label class="btn primario">Elegir archivos Word…<input type="file" data-destino="importar" accept=".docx,.doc" multiple hidden></label>
+      <label class="btn primario">Elegir archivos Word…<input type="file" data-destino="importar" accept=".docx,.doc,.odt" multiple hidden></label>
       <label class="btn">Elegir carpeta entera…<input type="file" data-destino="importar" webkitdirectory multiple hidden></label>
     </div>
     <div id="importacion" style="margin-top:12px"></div>
@@ -705,7 +705,7 @@ function vistaAjustes() {
     <p class="chico">Elegí otra vez todos los Word: la app los compara con lo cargado <b>sin cambiar nada</b> y te muestra qué archivos
       no están en la app y en qué fichas puede haber consultas que no se separaron.</p>
     <div class="acciones">
-      <label class="btn">Elegir archivos para revisar…<input type="file" data-destino="revisar" accept=".docx,.doc" multiple hidden></label>
+      <label class="btn">Elegir archivos para revisar…<input type="file" data-destino="revisar" accept=".docx,.doc,.odt" multiple hidden></label>
       <label class="btn">Elegir carpeta entera…<input type="file" data-destino="revisar" webkitdirectory multiple hidden></label>
     </div>
     <div id="revision" style="margin-top:12px"></div>
@@ -888,12 +888,69 @@ function extraerConsultas(texto) {
 }
 
 // .docx con mammoth (conserva negritas y tablas); .doc (Word 97-2003) con word-extractor, solo texto.
+// Un .odt (LibreOffice / OpenOffice) es un zip: se busca content.xml en el índice del zip y se descomprime.
+async function archivoDeZip(buf, nombre) {
+  const dv = new DataView(buf);
+  let fin = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { fin = i; break; }
+  if (fin < 0) throw new Error('no es un zip');
+  let p = dv.getUint32(fin + 16, true);
+  for (let k = dv.getUint16(fin + 10, true); k > 0 && dv.getUint32(p, true) === 0x02014b50; k--) {
+    const largoNombre = dv.getUint16(p + 28, true);
+    if (td.decode(new Uint8Array(buf, p + 46, largoNombre)) === nombre) {
+      const metodo = dv.getUint16(p + 10, true), tam = dv.getUint32(p + 20, true), local = dv.getUint32(p + 42, true);
+      const ini = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+      const datos = new Uint8Array(buf, ini, tam);
+      if (metodo === 0) return td.decode(datos);
+      return new Response(new Blob([datos]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    }
+    p += 46 + largoNombre + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  throw new Error('falta ' + nombre);
+}
+// Texto de content.xml: un renglón por párrafo; cada fila de tabla en un renglón.
+function textoOdt(xml) {
+  const TXT = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  const IGNORAR = new Set(['annotation', 'note', 'tracked-changes', 'sequence-decls']);
+  const enLinea = nodo => {
+    let t = '';
+    for (const h of nodo.childNodes) {
+      if (h.nodeType === 3) t += h.nodeValue;
+      else if (h.nodeType !== 1 || IGNORAR.has(h.localName)) continue;
+      else if (h.localName === 's') t += ' '.repeat(+(h.getAttributeNS(TXT, 'c') || 1));
+      else if (h.localName === 'tab') t += '  ';
+      else if (h.localName === 'line-break') t += '\n';
+      else t += enLinea(h);
+    }
+    return t;
+  };
+  const lineas = [];
+  const recorrer = nodo => {
+    for (const h of nodo.children) {
+      if (IGNORAR.has(h.localName)) continue;
+      if (h.localName === 'p' || h.localName === 'h') lineas.push(...enLinea(h).split('\n'));
+      else if (h.localName === 'table-row') {
+        lineas.push([...h.children].filter(c => c.localName === 'table-cell')
+          .map(c => [...c.getElementsByTagNameNS(TXT, 'p')].map(enLinea).join(' ').trim()).filter(Boolean).join('  '));
+      } else recorrer(h);
+    }
+  };
+  recorrer(doc.documentElement);
+  return lineas.join('\n');
+}
+
 async function leerWord(f) {
   const buf = await f.arrayBuffer();
   const firma = new Uint8Array(buf.slice(0, 2));
   if (firma[0] === 0xd0 && firma[1] === 0xcf) {
     const { cuerpo, encabezados } = await window.leerDoc(buf);
     const texto = [encabezados, cuerpo].filter(t => t && t.trim()).join('\n').replace(/\t+/g, '  ');
+    const html = texto.split('\n').map(l => l.trim() ? `<p>${esc(l)}</p>` : '').join('');
+    return { html, texto };
+  }
+  if (/\.odt$/i.test(f.name)) {
+    const texto = textoOdt(await archivoDeZip(buf, 'content.xml'));
     const html = texto.split('\n').map(l => l.trim() ? `<p>${esc(l)}</p>` : '').join('');
     return { html, texto };
   }
@@ -911,7 +968,7 @@ function separarArchivos(lista) {
   const word = [], temporales = [], otros = [];
   for (const f of lista) {
     if (/^~\$/.test(f.name) || /^\./.test(f.name)) temporales.push(f);
-    else if (/\.docx?$/i.test(f.name)) word.push(f);
+    else if (/\.(docx?|odt)$/i.test(f.name)) word.push(f);
     else otros.push(f);
   }
   word.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
@@ -942,7 +999,7 @@ async function revisarWord(archivos) {
     const f = archivos[i];
     estado.textContent = `Revisando ${i + 1} de ${archivos.length}: ${f.name}`;
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
-    const numero = f.name.replace(/\.docx?$/i, '').trim();
+    const numero = f.name.replace(/\.(docx?|odt)$/i, '').trim();
     const ruta = f.webkitRelativePath || f.name;
     if (vistos.has(numero)) repetidos.push(`${ruta} y ${vistos.get(numero)}`);
     vistos.set(numero, ruta);
@@ -988,7 +1045,7 @@ async function importarWord(archivos) {
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
     try {
       const { html, texto } = await leerWord(f);
-      const numero = f.name.replace(/\.docx?$/i, '').trim();
+      const numero = f.name.replace(/\.(docx?|odt)$/i, '').trim();
       const datos = extraerDatos(texto);
       const consultas = extraerConsultas(texto);
       evoluciones += consultas.length;
