@@ -23,7 +23,7 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
 2. En la pestaña **Permissions** marcá `files.content.read` y `files.content.write` y apretá **Submit**.
 3. En la pestaña **Settings**:
    - En *OAuth 2 → Redirect URIs* agregá la dirección donde se publica la app
-     (por ejemplo `https://drsebastianmaldonado.github.io/historias-clinicas/`).
+     (por ejemplo `https://drsebastianmaldonado.github.io/Historias-clinicas/`).
    - Copiá la **App key** y pegala en `config.js` (`dropboxAppKey`). La App key no es secreta.
 4. Abrí la app, tocá **Conectar con Dropbox**, autorizá y creá la contraseña.
 5. En el celular: abrí la misma dirección, conectá Dropbox, ingresá la contraseña y agregala a la pantalla de inicio.
