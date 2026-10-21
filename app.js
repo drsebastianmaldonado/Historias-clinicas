@@ -929,8 +929,17 @@ async function nuevoPDF(titulo, fecha) {
   pdf.firma = () => {
     const enc = Object.assign({}, ENCABEZADO_INICIAL, S.db.encabezado);
     const centro = M + ANCHO - 35;
-    pdf.espacio(40); pdf.y += 26;
     const f = S.db.firma;
+    // Firma con sello: la imagen ya trae nombre y matrícula, va sola y más grande, sin línea ni texto.
+    if (f?.conSello) {
+      const k = Math.min(70 / f.ancho, 38 / f.alto);
+      const w = f.ancho * k, h = f.alto * k;
+      pdf.espacio(h + 16); pdf.y += 12;
+      doc.addImage(f.datos, 'PNG', centro - w / 2, pdf.y, w, h);
+      pdf.y += h + 4;
+      return;
+    }
+    pdf.espacio(40); pdf.y += 26;
     if (f) {
       const k = Math.min(60 / f.ancho, 24 / f.alto);
       const w = f.ancho * k, h = f.alto * k;
@@ -1010,7 +1019,7 @@ function guardarFirma(canvas, esFoto) {
   let suma = 0;
   for (let i = 0; i < d.length; i += 4 * 16) suma += (d[i] + d[i + 1] + d[i + 2]) / 3;
   const papel = suma / (d.length / (4 * 16));
-  const corte = esFoto ? papel - 60 : 250;
+  const corte = esFoto ? papel - 75 : 250;
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = (y * w + x) * 4;
@@ -1246,7 +1255,9 @@ function vistaAjustes() {
     <h3 style="margin-top:20px">Firma</h3>
     <p class="chico suave">Va arriba de la línea de firma en las evoluciones y resúmenes en PDF.
       Podés sacarle una foto a tu firma hecha en un papel blanco, o dibujarla con el dedo.</p>
-    ${S.db.firma ? `<div class="firma-vista"><img src="${S.db.firma.datos}" alt="Tu firma"></div>` : ''}
+    ${S.db.firma ? `<div class="firma-vista"><img src="${S.db.firma.datos}" alt="Tu firma"></div>
+    <label class="casilla"><input type="checkbox" id="firma-sello" ${S.db.firma.conSello ? 'checked' : ''}>
+      La imagen incluye el sello (nombre y matrícula): no repetirlos debajo de la firma</label>` : ''}
     <div class="acciones">
       <label class="btn">Subir foto de la firma<input type="file" id="foto-firma" accept="image/*" hidden></label>
       <button class="btn" data-accion="dibujar-firma">Dibujar firma</button>
@@ -1269,6 +1280,7 @@ function vistaAjustes() {
     <p id="resumen-datos">${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones ·
       ${S.db.pacientes.reduce((n, p) => n + (p.estudios?.length || 0), 0)} estudios</p>
   </div>`;
+  $('#firma-sello')?.addEventListener('change', e => { S.db.firma.conSello = e.target.checked; guardar(); });
   $('#foto-firma')?.addEventListener('change', async e => {
     const f = e.target.files[0];
     if (!f) return;
