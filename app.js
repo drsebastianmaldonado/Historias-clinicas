@@ -811,7 +811,11 @@ function extraerDatos(texto) {
   if (consultas.length) d.ultimaConsultaImportada = consultas.sort().pop();
 
   const os = buscar(ETQ_OS, cabecera).replace(CORTE, '').trim();
-  if (os) d.obraSocial = os;
+  // «SWISS: 80000672996» → obra social «SWISS» y N° de afiliado aparte.
+  // Hace falta «:», «N°»/«Nro» antes del número, o un número largo (así «OSDE 210» o «plan 2000» quedan enteros).
+  const conAfiliado = os.match(/^(.*?\S)\s*(?:[:\-–]|\s(?:n[°º]|nro\.?|afiliado:?))\s*(\d[\d\s\-\/]{3,})$/i) || os.match(/^(.*?\S)\s+(\d{6,})$/);
+  if (conAfiliado) { d.obraSocial = conAfiliado[1].trim(); d.nroAfiliado = conAfiliado[2].replace(/\s+/g, ''); }
+  else if (os) d.obraSocial = os;
 
   for (const k of Object.keys(d)) if (!d[k]) delete d[k];
   return d;
