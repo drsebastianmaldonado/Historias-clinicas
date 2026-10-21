@@ -282,7 +282,7 @@ const CAMPOS_ESTUDIO = [
 
 const paciente = id => S.db.pacientes.find(p => p.id === id);
 const nombreCompleto = p => [p.apellido, p.nombre].filter(Boolean).join(', ') || (p.numero ? 'Historia N° ' + p.numero : 'Sin nombre');
-const ultimaFecha = p => (p.evoluciones || []).reduce((m, e) => (e.fecha > m ? e.fecha : m), '');
+const ultimaFecha = p => (p.evoluciones || []).reduce((m, e) => (e.fecha > m ? e.fecha : m), p.ultimaConsultaImportada || '');
 
 // ---------- Pantallas de ingreso ----------
 function pantallaInicio(error) {
@@ -765,9 +765,12 @@ function fechaDesdeTexto(d, m, a) {
 }
 
 // Las historias en Word tienen nombre, fecha de nacimiento y obra social; el resto queda en la historia importada.
-const ETQ_NOMBRE = /^(?:apellido\s*y\s*nombres?|nombre\s*y\s*apellidos?|paciente|nombres?)\s*[:.\-–]?\s*(.*)$/i;
-const ETQ_NAC = /(?:fecha\s*de\s*nac(?:imiento)?|f\.?\s*(?:de\s*)?nac\.?|f\.?\s*n\.?)\s*[:.\-–]?\s*(.*)$/i;
-const ETQ_OS = /(?:obra\s*social|\bo\.?\s?s\.?(?=\s*[:\-–])|prepaga|cobertura)\s*[:.\-–]?\s*(.*)$/i;
+// Una etiqueta cuenta solo si va seguida de «:» o «-», o si está sola en su renglón (celda de tabla):
+// así «Paciente de 63 años» no se toma como nombre.
+const ETQ_NOMBRE = /^(?:apellido\s*y\s*nombres?|nombre\s*y\s*apellidos?|paciente|nombres?)(?:\s*[:\-–]\s*(.*)|\s*)$/i;
+// (No se usa \b porque en JavaScript la «ñ» no cuenta como letra: «años» terminaría en la etiqueta «os».)
+const ETQ_NAC = /(?:^|[\s,;(])(?:fecha\s*de\s*nac(?:imiento)?|f\.?\s*(?:de\s*)?nac\.?|f\.?\s*n\.?)\s*[:.\-–]?\s*(\d.*|)$/i;
+const ETQ_OS = /^(?:obra\s*social|o\.?\s?s\.?|prepaga|cobertura)\s*[:\-–]?\s*$|(?:^|[\s,;])(?:obra\s*social|o\.?\s?s\.?|prepaga|cobertura)\s*[:\-–]\s*(.*)$/i;
 const CORTE = /[\s\-–,]+(?:edad\b|fecha\s*de\s*nac|f\.?\s*(?:de\s*)?nac|f\.?\s*n\.?\s*[:\-]|obra\s*social|o\.?\s?s\.?\s*[:\-]|prepaga|dni\b|d\.n\.i).*$/i;
 const FECHA = /(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})/;
 
@@ -793,8 +796,19 @@ function extraerDatos(texto) {
     if (partes.length >= 2) { d.apellido = partes[0]; d.nombre = partes.slice(1).join(' '); } else d.apellido = nombre;
   }
 
-  let m = buscar(ETQ_NAC, cabecera).match(FECHA) || cabecera.map(l => l.match(FECHA)).find(Boolean);
+  let m = buscar(ETQ_NAC, cabecera).match(FECHA);
+  // Sin etiqueta: una fecha en los primeros renglones, salvo que la siga un texto largo
+  // (en ese caso es la fecha de la primera consulta, no la de nacimiento).
+  if (!m) {
+    const i = cabecera.slice(0, 3).findIndex(l => FECHA.test(l));
+    if (i >= 0 && (cabecera[i + 1] || '').length <= 40) m = cabecera[i].match(FECHA);
+  }
   if (m) d.fechaNac = fechaDesdeTexto(m[1], m[2], m[3]);
+
+  // Fecha de la última consulta: el renglón más reciente que es solo una fecha (como «17/5/2014»).
+  const consultas = lineas.map(l => l.match(/^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})\s*[:\-–]?$/))
+    .filter(Boolean).map(f => fechaDesdeTexto(f[1], f[2], f[3])).filter(f => f && f !== d.fechaNac && f <= hoyISO());
+  if (consultas.length) d.ultimaConsultaImportada = consultas.sort().pop();
 
   const os = buscar(ETQ_OS, cabecera).replace(CORTE, '').trim();
   if (os) d.obraSocial = os;
@@ -834,7 +848,7 @@ async function importarWord(archivos) {
         existente.historiaImportada = limpiarHTML(html);
         existente.importado = importado;
         textoImportado.delete(existente);
-        for (const [k, v] of Object.entries(datos)) if (!existente[k]) existente[k] = v;
+        for (const [k, v] of Object.entries(datos)) if (!existente[k] || k === 'ultimaConsultaImportada') existente[k] = v;
         actualizados++;
       } else {
         const p = Object.assign({ id: nuevoId(), creado: new Date().toISOString(), numero, evoluciones: [], estudios: [] },
