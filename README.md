@@ -31,7 +31,8 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
 ## Importar las historias de Word
 
 *Ajustes → Importar historias de Word*: se eligen todos los `.docx` juntos. El nombre del archivo (por ejemplo `245.docx`)
-pasa a ser el N° de historia y el contenido completo queda en la ficha como «Historia anterior». Se intentan reconocer
+pasa a ser el N° de historia. Cada renglón que es solo una fecha (como `25/4/2014` o `19/5`) abre una evolución nueva;
+«MC:», «Impresión diagnóstica:» y «Conducta:» van a su campo. El Word completo queda además en «Historia original completa». Se intentan reconocer
 nombre, fecha de nacimiento y obra social (con o sin etiquetas como «Nombre:», «FN:», «OS:»); lo que no se reconozca se completa a mano.
 Lee tanto `.docx` como los `.doc` antiguos (Word 97-2003; de estos se importa solo el texto, sin negritas ni tablas).
 

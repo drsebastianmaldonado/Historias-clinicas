@@ -538,7 +538,7 @@ function vistaPaciente(id) {
       ${ro ? '' : `<button class="btn primario chico" data-accion="nueva-evolucion" data-id="${esc(id)}">+ Evolución</button>`}</div>
     ${evol.length ? evol.map(e => `
       <div class="registro">
-        <div class="registro-cab"><h3>${fechaLeg(e.fecha)}${e.motivo ? ' — ' + esc(e.motivo) : ''}</h3>
+        <div class="registro-cab"><h3>${fechaLeg(e.fecha)}${e.motivo ? ' — ' + esc(e.motivo) : ''}${e.importada ? ' <span class="etiqueta" title="Consulta traída de la historia en Word">Word</span>' : ''}</h3>
           ${ro ? '' : `<button class="btn chico no-imprimir" data-accion="editar-evolucion" data-id="${esc(id)}" data-reg="${esc(e.id)}">Editar</button>`}</div>
         <dl>
           ${e.peso || e.talla ? `<dt>Peso / talla</dt><dd>${esc([e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '))}</dd>` : ''}
@@ -567,7 +567,7 @@ function vistaPaciente(id) {
   ${p.historiaImportada ? `
   <div class="tarjeta">
     <details ${p.evoluciones?.length ? '' : 'open'}>
-      <summary>Historia anterior (importada de Word${p.importado?.archivo ? ': ' + esc(p.importado.archivo) : ''})</summary>
+      <summary>Historia original completa (Word${p.importado?.archivo ? ': ' + esc(p.importado.archivo) : ''})</summary>
       <div class="importada" style="margin-top:10px">${limpiarHTML(p.historiaImportada)}</div>
     </details>
   </div>` : ''}
@@ -833,6 +833,43 @@ function extraerDatos(texto) {
   return d;
 }
 
+// Corta la historia en consultas: cada renglón que es solo una fecha («25/4/2014», «19/5») abre una consulta nueva.
+// Una fecha sin año toma el de la consulta anterior. «MC:», «Diagnóstico:» y «Conducta:» van a su campo.
+const RENGLON_FECHA = /^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?:\s*[\/\-.]\s*(\d{2,4}))?\s*[:\-–.]?$/;
+const CAMPOS_CONSULTA = [
+  ['motivo', /^(?:mc|m\.c\.|motivo(?:\s+de\s+consulta)?)\s*[:\-–]\s*(.+)$/i],
+  ['diagnostico', /^(?:impresi[oó]n\s+diagn[oó]stica|diagn[oó]sticos?|dx|id)\s*[:\-–]\s*(.+)$/i],
+  ['conducta', /^conducta\s*[:\-–]\s*(.+)$/i],
+];
+function extraerConsultas(texto) {
+  const consultas = [];
+  let actual = null, anio = null;
+  for (const linea of texto.split('\n').map(l => l.trim())) {
+    const m = linea.match(RENGLON_FECHA);
+    if (m && (m[3] || anio)) {
+      const fecha = fechaDesdeTexto(m[1], m[2], m[3] || anio);
+      if (fecha) {
+        anio = fecha.slice(0, 4);
+        actual = { fecha, lineas: [] };
+        consultas.push(actual);
+        continue;
+      }
+    }
+    if (actual) actual.lineas.push(linea);
+  }
+  return consultas.map(c => {
+    const ev = { id: nuevoId(), fecha: c.fecha, importada: true };
+    const resto = [];
+    for (const l of c.lineas) {
+      const campo = CAMPOS_CONSULTA.find(([k, re]) => !ev[k] && re.test(l));
+      if (campo) ev[campo[0]] = l.match(campo[1])[1].trim();
+      else resto.push(l);
+    }
+    ev.texto = resto.filter(Boolean).join('\n'); // mammoth separa los párrafos con renglones vacíos
+    return ev;
+  }).filter(ev => ev.texto || ev.motivo || ev.diagnostico || ev.conducta);
+}
+
 // .docx con mammoth (conserva negritas y tablas); .doc (Word 97-2003) con word-extractor, solo texto.
 async function leerWord(f) {
   const buf = await f.arrayBuffer();
@@ -857,7 +894,7 @@ async function importarWord(archivos) {
   if (!window.mammoth || !window.leerDoc) { zona.innerHTML = '<p class="error-texto">No se cargó el lector de Word. Recargá la página.</p>'; return; }
   zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="imp-estado"></p>`;
   const barra = $('.progreso > div', zona), estado = $('#imp-estado');
-  let nuevos = 0, actualizados = 0;
+  let nuevos = 0, actualizados = 0, evoluciones = 0;
   const errores = [];
   const porNumero = new Map(S.db.pacientes.filter(p => p.numero).map(p => [String(p.numero), p]));
   archivos.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
@@ -871,6 +908,8 @@ async function importarWord(archivos) {
       const { html, texto } = await leerWord(f);
       const numero = f.name.replace(/\.docx?$/i, '').trim();
       const datos = extraerDatos(texto);
+      const consultas = extraerConsultas(texto);
+      evoluciones += consultas.length;
       const importado = { archivo: f.name, fecha: new Date().toISOString() };
       const existente = porNumero.get(numero);
       if (existente) {
@@ -878,9 +917,11 @@ async function importarWord(archivos) {
         existente.importado = importado;
         textoImportado.delete(existente);
         for (const [k, v] of Object.entries(datos)) if (!existente[k] || k === 'ultimaConsultaImportada') existente[k] = v;
+        // Se reemplazan las consultas que vinieron del Word; las cargadas en la app quedan como están.
+        existente.evoluciones = (existente.evoluciones || []).filter(e => !e.importada).concat(consultas);
         actualizados++;
       } else {
-        const p = Object.assign({ id: nuevoId(), creado: new Date().toISOString(), numero, evoluciones: [], estudios: [] },
+        const p = Object.assign({ id: nuevoId(), creado: new Date().toISOString(), numero, evoluciones: consultas, estudios: [] },
           datos, { historiaImportada: limpiarHTML(html), importado });
         S.db.pacientes.push(p);
         porNumero.set(numero, p);
@@ -894,7 +935,7 @@ async function importarWord(archivos) {
   }
   estado.textContent = 'Guardando…';
   if (nuevos || actualizados) await guardar();
-  zona.innerHTML = `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
+  zona.innerHTML = `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados, ${evoluciones} consultas separadas${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
     ${errores.length ? `<details><summary>Ver archivos con problemas</summary><ul class="chico">${errores.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}
     ${S.pendiente ? '<p class="error-texto">Ojo: no se pudo guardar en Dropbox. Revisá el aviso de arriba.</p>' : ''}
     <p class="chico suave">Revisá algunas fichas: los datos que no se reconocieron automáticamente (nombre, fecha de nacimiento u obra social) se pueden completar con «Editar datos».</p>`;
