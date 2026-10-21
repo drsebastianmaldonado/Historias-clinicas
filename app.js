@@ -588,13 +588,13 @@ function campoHTML(c, v) {
   return `<label class="campo${c.tipo === 'area' || c.ancho ? ' ancho' : ''}"><span>${c.t}${c.req ? ' *' : ''}</span>${input}</label>`;
 }
 
-function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar }) {
+function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Eliminar' }) {
   const dlg = $('#dlg'), form = $('#dlg-form');
   form.innerHTML = `<h2>${esc(titulo)}</h2>
     <div class="rejilla">${campos.map(c => campoHTML(c, valores[c.k])).join('')}</div>
     <p class="error-texto" id="dlg-err"></p>
     <div class="pie-dialogo">
-      ${onBorrar ? '<button type="button" class="btn peligro izq" data-dlg="borrar">Eliminar</button>' : ''}
+      ${onBorrar ? `<button type="button" class="btn peligro izq" data-dlg="borrar">${esc(textoBorrar)}</button>` : ''}
       <button type="button" class="btn" data-dlg="cancelar">Cancelar</button>
       <button type="submit" class="btn primario">Guardar</button>
     </div>`;
@@ -603,7 +603,7 @@ function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar }) {
     const b = ev.target.closest('[data-dlg]');
     if (!b) return;
     if (b.dataset.dlg === 'cancelar') cerrar();
-    if (b.dataset.dlg === 'borrar' && confirm('¿Eliminar este registro? No se puede deshacer.')) { onBorrar(); cerrar(); }
+    if (b.dataset.dlg === 'borrar' && onBorrar() !== false) cerrar();
   };
   form.onsubmit = ev => {
     ev.preventDefault();
@@ -632,7 +632,16 @@ function editarPaciente(id) {
       const destino = '#/p/' + encodeURIComponent((p || S.db.pacientes[S.db.pacientes.length - 1]).id);
       if (location.hash === destino) mostrar(); else location.hash = destino;
     },
+    onBorrar: p ? () => borrarPaciente(p) : null,
+    textoBorrar: 'Eliminar paciente',
   });
+}
+function borrarPaciente(p) {
+  const n = prompt(`Para eliminar a ${nombreCompleto(p)} con todas sus evoluciones y estudios, escribí ELIMINAR:`);
+  if (!n || n.trim().toUpperCase() !== 'ELIMINAR') return false;
+  S.db.pacientes = S.db.pacientes.filter(x => x !== p);
+  guardar();
+  location.hash = '#/';
 }
 function siguienteNumero() {
   const nums = S.db.pacientes.map(p => parseInt(p.numero, 10)).filter(n => !isNaN(n));
@@ -653,7 +662,10 @@ function editarRegistro(id, lista, regId) {
       else p[lista].push(Object.assign({ id: nuevoId(), creado: new Date().toISOString() }, d));
       guardar(); mostrar();
     },
-    onBorrar: reg ? () => { p[lista] = p[lista].filter(r => r !== reg); guardar(); mostrar(); } : null,
+    onBorrar: reg ? () => {
+      if (!confirm('¿Eliminar este registro? No se puede deshacer.')) return false;
+      p[lista] = p[lista].filter(r => r !== reg); guardar(); mostrar();
+    } : null,
   });
 }
 
@@ -907,12 +919,7 @@ document.addEventListener('click', ev => {
     case 'imprimir': print(); break;
     case 'descargar-copia': descargarCopia(); break;
     case 'cambiar-clave': cambiarClave(); break;
-    case 'borrar-paciente': {
-      const p = paciente(id);
-      const n = prompt(`Para eliminar a ${nombreCompleto(p)} con todas sus evoluciones y estudios, escribí ELIMINAR:`);
-      if (n && n.trim().toUpperCase() === 'ELIMINAR') { S.db.pacientes = S.db.pacientes.filter(x => x !== p); guardar(); location.hash = '#/'; }
-      break;
-    }
+    case 'borrar-paciente': borrarPaciente(paciente(id)); break;
     case 'desconectar':
       if (confirm('¿Desconectar este dispositivo? Los datos en Dropbox no se borran; para volver a entrar tendrás que conectar Dropbox de nuevo.')) {
         colaGuardado.then(() => {
