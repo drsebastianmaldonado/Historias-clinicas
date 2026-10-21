@@ -692,7 +692,7 @@ function vistaAjustes() {
   ${ro ? '' : `<div class="tarjeta">
     <h2>Importar historias de Word</h2>
     <p class="chico">Seleccioná los archivos de Word, <b>.doc</b> o <b>.docx</b> (podés elegir todos juntos). El nombre de cada archivo se toma como N° de historia
-      y el contenido completo queda guardado en la ficha como «Historia anterior». Si un N° ya existe, se actualiza su historia anterior sin tocar lo cargado en la app.</p>
+      y cada consulta con fecha pasa a ser una evolución; el Word completo queda en «Historia original completa». Si un N° ya existe, se actualiza lo que vino del Word sin tocar lo cargado en la app.</p>
     <label class="btn primario">Elegir archivos Word…<input type="file" id="archivos-word" accept=".docx,.doc" multiple hidden></label>
     <div id="importacion" style="margin-top:12px"></div>
   </div>
