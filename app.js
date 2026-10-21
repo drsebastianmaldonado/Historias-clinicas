@@ -698,6 +698,14 @@ function vistaAjustes() {
   </div>
 
   <div class="tarjeta">
+    <h2>Revisar importación</h2>
+    <p class="chico">Elegí otra vez todos los Word: la app los compara con lo cargado <b>sin cambiar nada</b> y te muestra qué archivos
+      no están en la app y en qué fichas puede haber consultas que no se separaron.</p>
+    <label class="btn">Elegir archivos para revisar…<input type="file" id="archivos-revisar" accept=".docx,.doc" multiple hidden></label>
+    <div id="revision" style="margin-top:12px"></div>
+  </div>
+
+  <div class="tarjeta">
     <h2>Seguridad</h2>
     <p class="chico suave">La app se bloquea sola después de ${CONFIG.minutosBloqueo} minutos sin uso.</p>
     <div class="acciones">
@@ -713,6 +721,8 @@ function vistaAjustes() {
   </div>`;
   const inp = $('#archivos-word');
   if (inp) inp.addEventListener('change', e => importarWord([...e.target.files]));
+  const rev = $('#archivos-revisar');
+  if (rev) rev.addEventListener('change', e => revisarWord([...e.target.files]));
 }
 
 function descargarCopia() {
@@ -886,6 +896,50 @@ async function leerWord(f) {
     mammoth.extractRawText({ arrayBuffer: buf }),
   ]);
   return { html, texto };
+}
+
+// Renglón que empieza con una fecha completa seguida de texto: puede ser una consulta que no se separó.
+const FECHA_CON_TEXTO = /^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})\s*[:\-–.,]?\s+\S/;
+
+async function revisarWord(archivos) {
+  const zona = $('#revision');
+  archivos = archivos.filter(f => !/^~\$/.test(f.name));
+  if (!archivos.length) return;
+  zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="rev-estado"></p>`;
+  const barra = $('.progreso > div', zona), estado = $('#rev-estado');
+  const porNumero = new Map(S.db.pacientes.filter(p => p.numero).map(p => [String(p.numero), p]));
+  const vistos = new Map();
+  const faltan = [], repetidos = [], ilegibles = [], sinConsultas = [], dudosas = [];
+  archivos.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  for (let i = 0; i < archivos.length; i++) {
+    const f = archivos[i];
+    estado.textContent = `Revisando ${i + 1} de ${archivos.length}: ${f.name}`;
+    barra.style.width = ((i + 1) / archivos.length * 100) + '%';
+    const numero = f.name.replace(/\.docx?$/i, '').trim();
+    if (vistos.has(numero)) repetidos.push(`${f.name} y ${vistos.get(numero)}`);
+    vistos.set(numero, f.name);
+    const p = porNumero.get(numero);
+    let texto;
+    try { texto = (await leerWord(f)).texto; } catch { ilegibles.push(f.name); continue; }
+    if (!p) { faltan.push(f.name); continue; }
+    const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
+    // No cuenta las listas de resultados («ETT:» / «11/2013: …» / «29/4/2014: …»).
+    const sospechosas = lineas.filter((l, j) => FECHA_CON_TEXTO.test(l) && !/:\s*$/.test(lineas[j - 1] || '') && !/^\d{1,2}\s*[\/\-.]\s*\d{1,4}/.test(lineas[j - 1] || ''));
+    if (sospechosas.length) dudosas.push({ p, ejemplo: sospechosas[0], n: sospechosas.length });
+    else if (!extraerConsultas(texto).length) sinConsultas.push(p);
+    if (i % 10 === 9) await new Promise(r => setTimeout(r));
+  }
+  const enlace = p => `<a href="#/p/${encodeURIComponent(p.id)}">${esc(p.numero)} · ${esc(nombreCompleto(p))}</a>`;
+  const bloque = (titulo, ayuda, items) => items.length ? `<details><summary>${titulo}: ${items.length}</summary>
+    <p class="chico suave">${ayuda}</p><ul class="chico">${items.map(x => `<li>${x}</li>`).join('')}</ul></details>` : '';
+  const todoBien = !faltan.length && !repetidos.length && !ilegibles.length && !sinConsultas.length && !dudosas.length;
+  zona.innerHTML = `<p><b>Revisados ${archivos.length} archivos.</b> ${todoBien ? 'No se encontraron problemas.' : ''}</p>
+    ${bloque('No están en la app', 'Estos archivos no se importaron. Probá importarlos de nuevo.', faltan.map(esc))}
+    ${bloque('No se pudieron leer', 'Pueden estar dañados o protegidos con contraseña. Abrilos en Word y guardalos de nuevo.', ilegibles.map(esc))}
+    ${bloque('Archivos con el mismo número', 'Quedaron juntos en un solo paciente: el último importado reemplazó al otro.', repetidos.map(esc))}
+    ${bloque('Fechas pegadas al texto', 'Estas fichas tienen renglones que empiezan con una fecha seguida de texto: puede ser una consulta que no se separó. Se muestra el primero.',
+      dudosas.map(d => `${enlace(d.p)}<br><span class="suave">«${esc(d.ejemplo.slice(0, 90))}»${d.n > 1 ? ` y ${d.n - 1} más` : ''}</span>`))}
+    ${bloque('Sin ninguna consulta separada', 'El Word no tiene fechas solas en un renglón. La historia está completa en «Historia original completa».', sinConsultas.map(enlace))}`;
 }
 
 async function importarWord(archivos) {
