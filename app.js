@@ -643,8 +643,9 @@ function vistaPaciente(id) {
         </div>
       </div>
       <div class="acciones no-imprimir">
-        ${ro ? '' : `<button class="btn chico" data-accion="editar-paciente" data-id="${qid}">${ICONO.editar}<span>Editar datos</span></button>`}
-        <button class="btn chico" data-accion="imprimir">${ICONO.imprimir}<span>Imprimir</span></button>
+        ${ro ? '' : `<button class="btn chico" data-accion="editar-paciente" data-id="${qid}">${ICONO.editar}<span>Editar<span class="solo-pc"> datos</span></span></button>`}
+        <button class="btn chico" data-accion="resumen-pdf" data-id="${qid}">${ICONO.documento}<span>Resumen<span class="solo-pc"> PDF</span></span></button>
+        <button class="btn chico solo-pc" data-accion="imprimir">${ICONO.imprimir}<span>Imprimir</span></button>
       </div>
     </div>
     ${p.sexo || p.dni || p.telefono || p.responsable || p.email ? `<dl class="datos">
@@ -738,15 +739,15 @@ function campoHTML(c, v) {
   return `<label class="campo${c.tipo === 'area' || c.tipo === 'archivos' || c.ancho ? ' ancho' : ''}"><span>${c.t}${c.req ? ' *' : ''}</span>${input}</label>`;
 }
 
-function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Eliminar' }) {
+function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Eliminar', textoGuardar = 'Guardar', intro = '' }) {
   const dlg = $('#dlg'), form = $('#dlg-form');
-  form.innerHTML = `<h2>${esc(titulo)}</h2>
+  form.innerHTML = `<h2>${esc(titulo)}</h2>${intro}
     <div class="rejilla">${campos.map(c => campoHTML(c, valores[c.k])).join('')}</div>
     <p class="error-texto" id="dlg-err"></p>
     <div class="pie-dialogo">
       ${onBorrar ? `<button type="button" class="btn peligro izq" data-dlg="borrar">${esc(textoBorrar)}</button>` : ''}
       <button type="button" class="btn" data-dlg="cancelar">Cancelar</button>
-      <button type="submit" class="btn primario">Guardar</button>
+      <button type="submit" class="btn primario">${esc(textoGuardar)}</button>
     </div>`;
   const cerrar = () => { dlg.close(); form.onsubmit = null; form.onclick = null; };
   form.onclick = ev => {
@@ -880,97 +881,194 @@ const cargarJsPDF = () => cargaJsPDF ||= new Promise((ok, mal) => {
   document.head.append(sc);
 });
 
-async function pdfEvolucion(p, e, boton) {
-  if (!p || !e) return;
-  boton.disabled = true;
-  try {
-    const jsPDF = await cargarJsPDF();
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const M = 20, ANCHO = 210 - 2 * M, ALTO_UTIL = 297 - 22;
-    const AZUL = [31, 95, 139], GRIS = [95, 108, 123], TEXTO = [24, 33, 43];
-    let y = 22;
-    const espacio = h => { if (y + h > ALTO_UTIL) { doc.addPage(); y = 22; } };
-    const parrafo = (texto, { tam = 11, estilo = 'normal', color = TEXTO, interlineado = 5.2 } = {}) => {
-      doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...color);
-      for (const linea of doc.splitTextToSize(String(texto), ANCHO)) { espacio(interlineado); doc.text(linea, M, y); y += interlineado; }
-    };
-    const seccion = (titulo, texto) => {
-      if (!texto) return;
-      espacio(14); y += 3;
-      parrafo(titulo.toUpperCase(), { tam: 8.5, estilo: 'bold', color: GRIS, interlineado: 4.5 });
-      y += 0.5;
-      parrafo(texto);
-    };
-
-    // Encabezado del médico
-    const [nombre, ...resto] = lineasEncabezado();
-    parrafo(nombre, { tam: 15, estilo: 'bold', color: AZUL, interlineado: 6.5 });
-    for (const l of resto) parrafo(l, { tam: 9.5, color: GRIS, interlineado: 4.6 });
-    y += 2; doc.setDrawColor(...AZUL); doc.setLineWidth(0.6); doc.line(M, y, M + ANCHO, y); y += 9;
-
-    // Título y fecha
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...TEXTO);
-    doc.text('Evolución', M, y);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
-    doc.text(fechaLeg(e.fecha), M + ANCHO, y, { align: 'right' });
-    y += 8;
-
-    // Datos del paciente (la edad es la que tenía el día de la consulta)
-    const ref = e.fecha ? new Date(e.fecha + 'T00:00:00') : new Date();
+// Arma un PDF A4 con el encabezado del médico; devuelve funciones para ir escribiendo de arriba hacia abajo.
+async function nuevoPDF(titulo, fecha) {
+  const jsPDF = await cargarJsPDF();
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const M = 20, ANCHO = 210 - 2 * M, ALTO_UTIL = 297 - 22;
+  const AZUL = [31, 95, 139], GRIS = [95, 108, 123], TEXTO = [24, 33, 43];
+  const pdf = { doc, y: 22, M, ANCHO, GRIS, TEXTO };
+  pdf.espacio = h => { if (pdf.y + h > ALTO_UTIL) { doc.addPage(); pdf.y = 22; } };
+  pdf.parrafo = (texto, { tam = 11, estilo = 'normal', color = TEXTO, interlineado = 5.2, sangria = 0 } = {}) => {
+    doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...color);
+    for (const linea of doc.splitTextToSize(String(texto), ANCHO - sangria)) { pdf.espacio(interlineado); doc.text(linea, M + sangria, pdf.y); pdf.y += interlineado; }
+  };
+  pdf.rotulo = (t, { tam = 8.5 } = {}) => pdf.parrafo(t.toUpperCase(), { tam, estilo: 'bold', color: GRIS, interlineado: 4.5 });
+  pdf.seccion = (t, texto) => {
+    if (!texto) return;
+    pdf.espacio(14); pdf.y += 3;
+    pdf.rotulo(t); pdf.y += 0.5;
+    pdf.parrafo(texto);
+  };
+  // Título de un bloque grande (Estudios, Evoluciones…) con una línea fina debajo.
+  pdf.titulo = t => {
+    pdf.espacio(20); pdf.y += 6;
+    pdf.parrafo(t, { tam: 12.5, estilo: 'bold', color: AZUL, interlineado: 5.5 });
+    doc.setDrawColor(225, 230, 236); doc.setLineWidth(0.3); doc.line(M, pdf.y - 3, M + ANCHO, pdf.y - 3); pdf.y += 2;
+  };
+  pdf.datosPaciente = (p, ref) => {
     const filas = [
       ['Paciente', nombreCompleto(p)],
       ['N° de historia', numeroCorto(p)],
-      ['Nacimiento', p.fechaNac ? `${fechaLeg(p.fechaNac)} (${edadLarga(p.fechaNac, ref)} a la fecha de la consulta)` : ''],
+      ['Nacimiento', p.fechaNac ? `${fechaLeg(p.fechaNac)} (${edadLarga(p.fechaNac, ref)}${ref ? ' a la fecha de la consulta' : ''})` : ''],
       ['Obra social', [p.obraSocial, p.nroAfiliado && 'N° ' + p.nroAfiliado].filter(Boolean).join(' · ')],
       ['DNI', p.dni],
     ].filter(f => f[1]);
     doc.setFillColor(243, 245, 248);
-    const altoCaja = filas.length * 5.6 + 5;
-    doc.roundedRect(M, y - 4.5, ANCHO, altoCaja, 2, 2, 'F');
+    doc.roundedRect(M, pdf.y - 4.5, ANCHO, filas.length * 5.6 + 5, 2, 2, 'F');
     for (const [t, v] of filas) {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(...GRIS); doc.text(t, M + 4, y);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(...GRIS); doc.text(t, M + 4, pdf.y);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...TEXTO);
-      doc.text(doc.splitTextToSize(v, ANCHO - 44)[0], M + 38, y);
-      y += 5.6;
+      doc.text(doc.splitTextToSize(v, ANCHO - 44)[0], M + 38, pdf.y);
+      pdf.y += 5.6;
     }
-    y += 4;
-    if (p.alergias) { y += 2; parrafo('Alergias: ' + p.alergias, { estilo: 'bold', color: [180, 35, 24] }); }
-
-    seccion('Motivo de consulta', e.motivo);
-    seccion('Peso / talla', [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '));
-    seccion('Evolución', e.texto);
-    seccion('Diagnóstico', e.diagnostico);
-    seccion('Conducta', e.conducta);
-
-    // Pie en cada página
+    pdf.y += 4;
+    if (p.alergias) { pdf.y += 2; pdf.parrafo('Alergias: ' + p.alergias, { estilo: 'bold', color: [180, 35, 24] }); }
+  };
+  pdf.firma = () => {
+    const lineas = lineasEncabezado();
+    pdf.espacio(34); pdf.y += 22;
+    doc.setDrawColor(...GRIS); doc.setLineWidth(0.3); doc.line(M + ANCHO - 70, pdf.y, M + ANCHO, pdf.y); pdf.y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...GRIS);
+    for (const l of [lineas[0], ...lineas.slice(1).filter(l => /\b(mn|mp|mat)/i.test(l))]) { doc.text(l, M + ANCHO - 35, pdf.y, { align: 'center' }); pdf.y += 4.5; }
+  };
+  pdf.terminar = async (pie, nombreArchivo) => {
     const total = doc.getNumberOfPages();
     for (let i = 1; i <= total; i++) {
       doc.setPage(i);
       doc.setDrawColor(225, 230, 236); doc.setLineWidth(0.3); doc.line(M, 284, M + ANCHO, 284);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...GRIS);
-      doc.text(`${nombreCompleto(p)} · Evolución del ${fechaLeg(e.fecha)}`, M, 289);
+      doc.text(pie, M, 289);
       doc.text(`Página ${i} de ${total}`, M + ANCHO, 289, { align: 'right' });
     }
+    nombreArchivo = nombreArchivo.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\- ]+/g, '').replace(/\s+/g, ' ').trim() + '.pdf';
+    await entregarArchivo(new File([doc.output('blob')], nombreArchivo, { type: 'application/pdf' }));
+  };
 
-    const nombreArchivo = `Evolucion ${[p.apellido, p.nombre].filter(Boolean).join(' ') || numeroCorto(p)} ${e.fecha || ''}`
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\- ]+/g, '').replace(/\s+/g, ' ').trim() + '.pdf';
-    const archivo = new File([doc.output('blob')], nombreArchivo, { type: 'application/pdf' });
-    // En el celular abre el menú para compartir (WhatsApp, mail…); en la compu se descarga.
-    if (navigator.canShare?.({ files: [archivo] }) && matchMedia('(pointer: coarse)').matches) {
-      try { await navigator.share({ files: [archivo], title: nombreArchivo }); return; }
-      catch (err) { if (err.name === 'AbortError') return; }
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(archivo);
-    a.download = nombreArchivo;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  // Encabezado del médico, título y fecha
+  const [nombre, ...resto] = lineasEncabezado();
+  pdf.parrafo(nombre, { tam: 15, estilo: 'bold', color: AZUL, interlineado: 6.5 });
+  for (const l of resto) pdf.parrafo(l, { tam: 9.5, color: GRIS, interlineado: 4.6 });
+  pdf.y += 2; doc.setDrawColor(...AZUL); doc.setLineWidth(0.6); doc.line(M, pdf.y, M + ANCHO, pdf.y); pdf.y += 9;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...TEXTO);
+  doc.text(titulo, M, pdf.y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+  doc.text(fecha, M + ANCHO, pdf.y, { align: 'right' });
+  pdf.y += 8;
+  return pdf;
+}
+// En el celular abre el menú para compartir (WhatsApp, mail…); en la compu se descarga.
+async function entregarArchivo(archivo) {
+  if (navigator.canShare?.({ files: [archivo] }) && matchMedia('(pointer: coarse)').matches) {
+    try { await navigator.share({ files: [archivo], title: archivo.name }); return; }
+    catch (err) { if (err.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(archivo);
+  a.download = archivo.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+const nombreParaArchivo = p => [p.apellido, p.nombre].filter(Boolean).join(' ') || numeroCorto(p);
+
+async function pdfEvolucion(p, e, boton) {
+  if (!p || !e) return;
+  boton.disabled = true;
+  try {
+    const pdf = await nuevoPDF('Evolución', fechaLeg(e.fecha));
+    pdf.datosPaciente(p, e.fecha ? new Date(e.fecha + 'T00:00:00') : new Date());
+    pdf.seccion('Motivo de consulta', e.motivo);
+    pdf.seccion('Peso / talla', [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '));
+    pdf.seccion('Evolución', e.texto);
+    pdf.seccion('Diagnóstico', e.diagnostico);
+    pdf.seccion('Conducta', e.conducta);
+    await pdf.terminar(`${nombreCompleto(p)} · Evolución del ${fechaLeg(e.fecha)}`, `Evolucion ${nombreParaArchivo(p)} ${e.fecha || ''}`);
   } catch (err) {
     console.error(err);
     alert('No se pudo generar el PDF: ' + err.message);
   } finally {
     boton.disabled = false;
   }
+}
+
+// ---------- Resumen de historia clínica ----------
+const OPCIONES_EVOLUCIONES = { 'Las últimas 3': 3, 'La última': 1, 'Las últimas 5': 5, 'Las últimas 10': 10, 'Todas': Infinity, 'Ninguna': 0 };
+function dialogoResumen(p) {
+  const evol = p.evoluciones || [];
+  formulario({
+    titulo: 'Resumen de historia clínica — ' + nombreCompleto(p),
+    intro: `<p class="chico suave" style="margin:-8px 0 16px">Incluye datos del paciente, alergias, antecedentes, medicación y diagnósticos.
+      Elegí qué más agregar. Al final queda el lugar para firma y sello.</p>`,
+    campos: [
+      { k: 'destinatario', t: 'Dirigido a (opcional)', ancho: true },
+      { k: 'comentario', t: 'Resumen / comentario (opcional)', tipo: 'area' },
+      { k: 'evoluciones', t: `Evoluciones (tiene ${evol.length})`, tipo: 'select', ops: Object.keys(OPCIONES_EVOLUCIONES) },
+      { k: 'estudios', t: `Estudios (tiene ${(p.estudios || []).length})`, tipo: 'select', ops: ['Todos', 'Ninguno'] },
+    ],
+    valores: { evoluciones: 'Las últimas 3', estudios: 'Todos' },
+    textoGuardar: 'Descargar PDF',
+    async onGuardar(d, aviso) {
+      aviso('Generando el PDF…');
+      await pdfResumen(p, d);
+    },
+  });
+}
+
+async function pdfResumen(p, opciones) {
+  const hoy = hoyISO();
+  const pdf = await nuevoPDF('Resumen de historia clínica', fechaLeg(hoy));
+  const evol = [...(p.evoluciones || [])].filter(e => e.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  if (opciones.destinatario) { pdf.parrafo('A: ' + opciones.destinatario, { estilo: 'bold' }); pdf.y += 3; }
+  pdf.datosPaciente(p);
+  if (evol.length) {
+    pdf.parrafo(`En seguimiento desde el ${fechaLeg(evol[0].fecha)} · ${evol.length} consulta${evol.length === 1 ? '' : 's'} · última el ${fechaLeg(evol[evol.length - 1].fecha)}`,
+      { tam: 9.5, color: pdf.GRIS });
+  }
+  pdf.seccion('Resumen', opciones.comentario);
+  pdf.seccion('Antecedentes personales', p.antPersonales);
+  pdf.seccion('Antecedentes familiares', p.antFamiliares);
+  pdf.seccion('Medicación actual', p.medicacion);
+
+  // Diagnósticos sin repetir, con la fecha en que aparecen por primera vez
+  const dx = new Map();
+  for (const e of evol) {
+    if (!e.diagnostico) continue;
+    const clave = normalizar(e.diagnostico).replace(/[.\s]+$/, '');
+    if (!dx.has(clave)) dx.set(clave, { texto: e.diagnostico.replace(/[.\s]+$/, ''), desde: e.fecha });
+  }
+  pdf.seccion('Diagnósticos', [...dx.values()].map(d => `• ${d.texto} (desde ${fechaLeg(d.desde)})`).join('\n'));
+
+  const estudios = opciones.estudios === 'Todos' ? [...(p.estudios || [])].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '')) : [];
+  if (estudios.length) {
+    pdf.titulo('Estudios complementarios');
+    for (const e of estudios) {
+      pdf.espacio(12); pdf.y += 2;
+      pdf.parrafo(`${e.tipo === 'Otro' && e.detalle ? e.detalle : e.tipo}${e.fecha ? ' · ' + fechaLeg(e.fecha) : ''}`, { estilo: 'bold', tam: 10.5 });
+      if (e.resultado) pdf.parrafo(e.resultado, { tam: 10.5, interlineado: 4.9 });
+    }
+  }
+
+  const cuantas = OPCIONES_EVOLUCIONES[opciones.evoluciones] ?? 3;
+  const elegidas = cuantas ? evol.slice(-cuantas).reverse() : [];
+  if (elegidas.length) {
+    pdf.titulo(elegidas.length === evol.length ? 'Evoluciones' : `Últimas evoluciones (${elegidas.length} de ${evol.length})`);
+    for (const e of elegidas) {
+      pdf.espacio(14); pdf.y += 3;
+      pdf.parrafo(`${fechaLeg(e.fecha)}${e.motivo ? ' · ' + e.motivo : ''}`, { estilo: 'bold', tam: 10.5 });
+      const medidas = [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · ');
+      for (const t of [medidas && 'Peso / talla: ' + medidas, e.texto, e.diagnostico && 'Diagnóstico: ' + e.diagnostico, e.conducta && 'Conducta: ' + e.conducta]) {
+        if (t) pdf.parrafo(t, { tam: 10.5, interlineado: 4.9 });
+      }
+    }
+  }
+
+  const adjuntos = p.adjuntos || [];
+  if (adjuntos.length) {
+    pdf.seccion('Documentación en la historia (no incluida en este resumen)',
+      adjuntos.map(a => `• ${a.descripcion || a.nombre} (${[a.categoria, fechaLeg(a.fecha)].filter(Boolean).join(', ')})`).join('\n'));
+  }
+  pdf.firma();
+  await pdf.terminar(`${nombreCompleto(p)} · Resumen de historia clínica · ${fechaLeg(hoy)}`, `Resumen HC ${nombreParaArchivo(p)} ${hoy}`);
 }
 
 function borrarPaciente(p) {
@@ -1468,6 +1566,7 @@ document.addEventListener('click', ev => {
     case 'imprimir': print(); break;
     case 'pdf-evolucion': pdfEvolucion(paciente(id), (paciente(id).evoluciones || []).find(e => e.id === reg), b); break;
     case 'editar-encabezado': editarEncabezado(); break;
+    case 'resumen-pdf': dialogoResumen(paciente(id)); break;
     case 'adjuntar': editarAdjunto(id); break;
     case 'editar-adjunto': editarAdjunto(id, reg); break;
     case 'ver-adjunto': verAdjunto(id, reg); break;
