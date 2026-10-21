@@ -322,8 +322,8 @@ function edad(fn, ref = new Date()) {
   return a < 18 && m ? `${a} a ${m} m` : `${a} a`;
 }
 // «6 a 9 m» → «6 años 9 meses»
-function edadLarga(fn) {
-  return edad(fn).replace(/(\d+) ([amd])\b/g, (_, n, u) => n + ' ' + ({ a: ['año', 'años'], m: ['mes', 'meses'], d: ['día', 'días'] }[u][n === '1' ? 0 : 1]));
+function edadLarga(fn, ref) {
+  return edad(fn, ref).replace(/(\d+) ([amd])\b/g, (_, n, u) => n + ' ' + ({ a: ['año', 'años'], m: ['mes', 'meses'], d: ['día', 'días'] }[u][n === '1' ? 0 : 1]));
 }
 
 // ---------- Presentación ----------
@@ -345,6 +345,7 @@ const ICONO = {
   buscar: svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
   documento: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>'),
   imagen: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'),
+  compartir: svg('<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4M12 2v13"/>'),
   clip: svg('<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>'),
 };
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -663,6 +664,7 @@ function vistaPaciente(id) {
               <header>
                 <h3>${esc(e.motivo || 'Consulta')}</h3>
                 ${e.importada ? '<span class="etiqueta" title="Consulta traída de la historia en Word">Word</span>' : ''}
+                <button class="btn-icono no-imprimir" data-accion="pdf-evolucion" data-id="${qid}" data-reg="${esc(e.id)}" title="PDF para compartir" aria-label="PDF para compartir">${ICONO.compartir}</button>
                 ${botonEditar('editar-evolucion', e.id)}
               </header>
               ${e.peso || e.talla ? `<p class="medidas">${esc([e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '))}</p>` : ''}
@@ -850,6 +852,127 @@ $('#visor').addEventListener('close', () => {
   if (urlVisor) { URL.revokeObjectURL(urlVisor); urlVisor = null; }
 });
 
+// ---------- PDF de una evolución para compartir ----------
+const ENCABEZADO_INICIAL = { nombre: 'Dr. Sebastián Maldonado', especialidad: 'Cardiología y electrofisiología', matricula: '', contacto: '' };
+const lineasEncabezado = () => {
+  const e = Object.assign({}, ENCABEZADO_INICIAL, S.db.encabezado);
+  return [e.nombre, e.especialidad, e.matricula, e.contacto].filter(Boolean);
+};
+function editarEncabezado() {
+  formulario({
+    titulo: 'Encabezado de los PDF',
+    campos: [
+      { k: 'nombre', t: 'Nombre', req: true, ancho: true },
+      { k: 'especialidad', t: 'Especialidad', ancho: true },
+      { k: 'matricula', t: 'Matrícula (por ejemplo «MN 12345»)' },
+      { k: 'contacto', t: 'Contacto (dirección, teléfono o mail)' },
+    ],
+    valores: Object.assign({}, ENCABEZADO_INICIAL, S.db.encabezado),
+    onGuardar(d) { S.db.encabezado = d; guardar(); mostrar(); },
+  });
+}
+let cargaJsPDF = null;
+const cargarJsPDF = () => cargaJsPDF ||= new Promise((ok, mal) => {
+  const sc = document.createElement('script');
+  sc.src = 'vendor/jspdf.umd.min.js';
+  sc.onload = () => ok(window.jspdf.jsPDF);
+  sc.onerror = () => { cargaJsPDF = null; mal(new Error('No se pudo cargar el generador de PDF. Revisá la conexión.')); };
+  document.head.append(sc);
+});
+
+async function pdfEvolucion(p, e, boton) {
+  if (!p || !e) return;
+  boton.disabled = true;
+  try {
+    const jsPDF = await cargarJsPDF();
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const M = 20, ANCHO = 210 - 2 * M, ALTO_UTIL = 297 - 22;
+    const AZUL = [31, 95, 139], GRIS = [95, 108, 123], TEXTO = [24, 33, 43];
+    let y = 22;
+    const espacio = h => { if (y + h > ALTO_UTIL) { doc.addPage(); y = 22; } };
+    const parrafo = (texto, { tam = 11, estilo = 'normal', color = TEXTO, interlineado = 5.2 } = {}) => {
+      doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...color);
+      for (const linea of doc.splitTextToSize(String(texto), ANCHO)) { espacio(interlineado); doc.text(linea, M, y); y += interlineado; }
+    };
+    const seccion = (titulo, texto) => {
+      if (!texto) return;
+      espacio(14); y += 3;
+      parrafo(titulo.toUpperCase(), { tam: 8.5, estilo: 'bold', color: GRIS, interlineado: 4.5 });
+      y += 0.5;
+      parrafo(texto);
+    };
+
+    // Encabezado del médico
+    const [nombre, ...resto] = lineasEncabezado();
+    parrafo(nombre, { tam: 15, estilo: 'bold', color: AZUL, interlineado: 6.5 });
+    for (const l of resto) parrafo(l, { tam: 9.5, color: GRIS, interlineado: 4.6 });
+    y += 2; doc.setDrawColor(...AZUL); doc.setLineWidth(0.6); doc.line(M, y, M + ANCHO, y); y += 9;
+
+    // Título y fecha
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...TEXTO);
+    doc.text('Evolución', M, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    doc.text(fechaLeg(e.fecha), M + ANCHO, y, { align: 'right' });
+    y += 8;
+
+    // Datos del paciente (la edad es la que tenía el día de la consulta)
+    const ref = e.fecha ? new Date(e.fecha + 'T00:00:00') : new Date();
+    const filas = [
+      ['Paciente', nombreCompleto(p)],
+      ['N° de historia', numeroCorto(p)],
+      ['Nacimiento', p.fechaNac ? `${fechaLeg(p.fechaNac)} (${edadLarga(p.fechaNac, ref)} a la fecha de la consulta)` : ''],
+      ['Obra social', [p.obraSocial, p.nroAfiliado && 'N° ' + p.nroAfiliado].filter(Boolean).join(' · ')],
+      ['DNI', p.dni],
+    ].filter(f => f[1]);
+    doc.setFillColor(243, 245, 248);
+    const altoCaja = filas.length * 5.6 + 5;
+    doc.roundedRect(M, y - 4.5, ANCHO, altoCaja, 2, 2, 'F');
+    for (const [t, v] of filas) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(...GRIS); doc.text(t, M + 4, y);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...TEXTO);
+      doc.text(doc.splitTextToSize(v, ANCHO - 44)[0], M + 38, y);
+      y += 5.6;
+    }
+    y += 4;
+    if (p.alergias) { y += 2; parrafo('Alergias: ' + p.alergias, { estilo: 'bold', color: [180, 35, 24] }); }
+
+    seccion('Motivo de consulta', e.motivo);
+    seccion('Peso / talla', [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '));
+    seccion('Evolución', e.texto);
+    seccion('Diagnóstico', e.diagnostico);
+    seccion('Conducta', e.conducta);
+
+    // Pie en cada página
+    const total = doc.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(225, 230, 236); doc.setLineWidth(0.3); doc.line(M, 284, M + ANCHO, 284);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...GRIS);
+      doc.text(`${nombreCompleto(p)} · Evolución del ${fechaLeg(e.fecha)}`, M, 289);
+      doc.text(`Página ${i} de ${total}`, M + ANCHO, 289, { align: 'right' });
+    }
+
+    const nombreArchivo = `Evolucion ${[p.apellido, p.nombre].filter(Boolean).join(' ') || numeroCorto(p)} ${e.fecha || ''}`
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\- ]+/g, '').replace(/\s+/g, ' ').trim() + '.pdf';
+    const archivo = new File([doc.output('blob')], nombreArchivo, { type: 'application/pdf' });
+    // En el celular abre el menú para compartir (WhatsApp, mail…); en la compu se descarga.
+    if (navigator.canShare?.({ files: [archivo] }) && matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ files: [archivo], title: nombreArchivo }); return; }
+      catch (err) { if (err.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(archivo);
+    a.download = nombreArchivo;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (err) {
+    console.error(err);
+    alert('No se pudo generar el PDF: ' + err.message);
+  } finally {
+    boton.disabled = false;
+  }
+}
+
 function borrarPaciente(p) {
   const n = prompt(`Para eliminar a ${nombreCompleto(p)} con todas sus evoluciones y estudios, escribí ELIMINAR:`);
   if (!n || n.trim().toUpperCase() !== 'ELIMINAR') return false;
@@ -938,6 +1061,13 @@ function vistaAjustes() {
       <label class="btn">Elegir carpeta entera…<input type="file" data-destino="revisar" webkitdirectory multiple hidden></label>
     </div>
     <div id="revision" style="margin-top:12px"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Encabezado de los PDF</h2>
+    <p class="chico suave">Aparece arriba de las evoluciones que descargás o compartís en PDF.</p>
+    <p class="pre" style="margin:0 0 12px">${esc(lineasEncabezado().join('\n'))}</p>
+    <button class="btn" data-accion="editar-encabezado">Editar encabezado</button>
   </div>
 
   <div class="tarjeta">
@@ -1336,6 +1466,8 @@ document.addEventListener('click', ev => {
     case 'editar-estudio': editarRegistro(id, 'estudios', reg); break;
     case 'filtro-estudio': filtroEstudio[id] = tipo; mostrar(); break;
     case 'imprimir': print(); break;
+    case 'pdf-evolucion': pdfEvolucion(paciente(id), (paciente(id).evoluciones || []).find(e => e.id === reg), b); break;
+    case 'editar-encabezado': editarEncabezado(); break;
     case 'adjuntar': editarAdjunto(id); break;
     case 'editar-adjunto': editarAdjunto(id, reg); break;
     case 'ver-adjunto': verAdjunto(id, reg); break;

@@ -47,4 +47,5 @@ En la primera pantalla, **Usar en modo prueba** guarda todo solo en ese navegado
 
 Es HTML/CSS/JS sin compilación. Para probar en la computadora: `python3 -m http.server` y abrir `http://localhost:8000`.
 `vendor/mammoth.browser.min.js` es [mammoth 1.11.0](https://github.com/mwilliamson/mammoth.js) (licencia BSD-2, ver `vendor/mammoth-LICENSE.txt`).
+`vendor/jspdf.umd.min.js` es [jsPDF 2.5.2](https://github.com/parallax/jsPDF) (licencia MIT, ver `vendor/jspdf-LICENSE.txt`), para el PDF de cada evolución; se carga solo al usarlo.
 `vendor/lector-doc.min.js` empaqueta [word-extractor 1.0.4](https://github.com/morungos/node-word-extractor) (licencia MIT, ver `vendor/word-extractor-LICENSE.txt`) para leer los `.doc`.
