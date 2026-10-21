@@ -290,6 +290,10 @@ details > summary { cursor: pointer; font-weight: 600; }
 #visor-cuerpo iframe { width: 100%; height: 100%; border: 0; background: #fff; }
 .visor-mensaje { margin: auto; padding: 24px; text-align: center; }
 
+.firma-vista { display: inline-block; margin: 4px 0 12px; padding: 10px 16px; border: 1px dashed var(--borde); border-radius: 10px; background: #fff; }
+.firma-vista img { display: block; max-height: 70px; max-width: 260px; }
+.lienzo-firma { display: block; width: 100%; height: 220px; border: 1px dashed var(--tenue); border-radius: 12px; background: #fff; touch-action: none; cursor: crosshair; }
+
 /* ---------- Diálogo ---------- */
 dialog {
   border: 1px solid var(--borde); border-radius: 18px; padding: 0;

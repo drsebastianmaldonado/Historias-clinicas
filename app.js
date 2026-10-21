@@ -925,12 +925,20 @@ async function nuevoPDF(titulo, fecha) {
     pdf.y += 4;
     if (p.alergias) { pdf.y += 2; pdf.parrafo('Alergias: ' + p.alergias, { estilo: 'bold', color: [180, 35, 24] }); }
   };
+  // Línea de firma a la derecha, con la imagen de la firma encima si está cargada.
   pdf.firma = () => {
-    const lineas = lineasEncabezado();
-    pdf.espacio(34); pdf.y += 22;
+    const enc = Object.assign({}, ENCABEZADO_INICIAL, S.db.encabezado);
+    const centro = M + ANCHO - 35;
+    pdf.espacio(40); pdf.y += 26;
+    const f = S.db.firma;
+    if (f) {
+      const k = Math.min(60 / f.ancho, 24 / f.alto);
+      const w = f.ancho * k, h = f.alto * k;
+      doc.addImage(f.datos, 'PNG', centro - w / 2, pdf.y - h - 0.5, w, h);
+    }
     doc.setDrawColor(...GRIS); doc.setLineWidth(0.3); doc.line(M + ANCHO - 70, pdf.y, M + ANCHO, pdf.y); pdf.y += 5;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...GRIS);
-    for (const l of [lineas[0], ...lineas.slice(1).filter(l => /\b(mn|mp|mat)/i.test(l))]) { doc.text(l, M + ANCHO - 35, pdf.y, { align: 'center' }); pdf.y += 4.5; }
+    for (const l of [enc.nombre, enc.matricula].filter(Boolean)) { doc.text(l, centro, pdf.y, { align: 'center' }); pdf.y += 4.5; }
   };
   pdf.terminar = async (pie, nombreArchivo) => {
     const total = doc.getNumberOfPages();
@@ -982,6 +990,7 @@ async function pdfEvolucion(p, e, boton) {
     pdf.seccion('Evolución', e.texto);
     pdf.seccion('Diagnóstico', e.diagnostico);
     pdf.seccion('Conducta', e.conducta);
+    pdf.firma();
     await pdf.terminar(`${nombreCompleto(p)} · Evolución del ${fechaLeg(e.fecha)}`, `Evolucion ${nombreParaArchivo(p)} ${e.fecha || ''}`);
   } catch (err) {
     console.error(err);
@@ -989,6 +998,74 @@ async function pdfEvolucion(p, e, boton) {
   } finally {
     boton.disabled = false;
   }
+}
+
+// ---------- Firma ----------
+// Deja solo el trazo: lo claro (el papel) pasa a transparente, el resto a tinta azul oscuro, y se recorta al trazo.
+function guardarFirma(canvas, esFoto) {
+  const ctx = canvas.getContext('2d');
+  const { width: w, height: h } = canvas;
+  const img = ctx.getImageData(0, 0, w, h), d = img.data;
+  // En una foto el papel no es blanco puro: el corte se toma bastante por debajo del tono medio del papel.
+  let suma = 0;
+  for (let i = 0; i < d.length; i += 4 * 16) suma += (d[i] + d[i + 1] + d[i + 2]) / 3;
+  const papel = suma / (d.length / (4 * 16));
+  const corte = esFoto ? papel - 60 : 250;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    const l = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    if (d[i + 3] > 0 && l < corte) {
+      d[i] = 20; d[i + 1] = 35; d[i + 2] = 70;
+      d[i + 3] = Math.min(255, Math.round((corte - l) / corte * 255 * 2.2));
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    } else d[i + 3] = 0;
+  }
+  if (x1 < 0 || (x1 - x0) < 20) return 'No se encontró la firma en la imagen. Probá con más luz y un papel blanco.';
+  ctx.putImageData(img, 0, 0);
+  const m = 6, cw = x1 - x0 + 1 + 2 * m, ch = y1 - y0 + 1 + 2 * m;
+  const k = Math.min(1, 700 / cw);
+  const salida = document.createElement('canvas');
+  salida.width = Math.round(cw * k); salida.height = Math.round(ch * k);
+  salida.getContext('2d').drawImage(canvas, x0 - m, y0 - m, cw, ch, 0, 0, salida.width, salida.height);
+  S.db.firma = { datos: salida.toDataURL('image/png'), ancho: salida.width, alto: salida.height };
+  guardar(); mostrar();
+  return '';
+}
+function dibujarFirma() {
+  const dlg = $('#dlg'), form = $('#dlg-form');
+  form.innerHTML = `<h2>Dibujar firma</h2>
+    <p class="chico suave" style="margin-top:-8px">Firmá con el dedo (o con el mouse) dentro del recuadro.</p>
+    <canvas id="lienzo-firma" class="lienzo-firma"></canvas>
+    <p class="error-texto" id="lienzo-err"></p>
+    <div class="pie-dialogo">
+      <button type="button" class="btn izq" data-dlg="limpiar">Borrar y empezar de nuevo</button>
+      <button type="button" class="btn" data-dlg="cancelar">Cancelar</button>
+      <button type="submit" class="btn primario">Guardar firma</button>
+    </div>`;
+  dlg.showModal();
+  const c = $('#lienzo-firma');
+  const escala = devicePixelRatio || 1;
+  c.width = c.clientWidth * escala; c.height = c.clientHeight * escala;
+  const ctx = c.getContext('2d');
+  const limpiar = () => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); };
+  limpiar();
+  ctx.lineWidth = 2.6 * escala; ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = '#000';
+  let dibujando = false, hayTrazo = false;
+  const punto = ev => { const r = c.getBoundingClientRect(); return [(ev.clientX - r.left) * escala, (ev.clientY - r.top) * escala]; };
+  c.onpointerdown = ev => { dibujando = true; c.setPointerCapture(ev.pointerId); ctx.beginPath(); ctx.moveTo(...punto(ev)); };
+  c.onpointermove = ev => { if (!dibujando) return; ctx.lineTo(...punto(ev)); ctx.stroke(); hayTrazo = true; };
+  c.onpointerup = c.onpointercancel = () => { dibujando = false; };
+  form.onclick = ev => {
+    const b = ev.target.closest('[data-dlg]');
+    if (b?.dataset.dlg === 'cancelar') dlg.close();
+    if (b?.dataset.dlg === 'limpiar') { limpiar(); hayTrazo = false; }
+  };
+  form.onsubmit = ev => {
+    ev.preventDefault();
+    const error = hayTrazo ? guardarFirma(c, false) : 'Primero dibujá tu firma.';
+    if (error) $('#lienzo-err').textContent = error; else dlg.close();
+  };
 }
 
 // ---------- Resumen de historia clínica ----------
@@ -1166,6 +1243,16 @@ function vistaAjustes() {
     <p class="chico suave">Aparece arriba de las evoluciones que descargás o compartís en PDF.</p>
     <p class="pre" style="margin:0 0 12px">${esc(lineasEncabezado().join('\n'))}</p>
     <button class="btn" data-accion="editar-encabezado">Editar encabezado</button>
+    <h3 style="margin-top:20px">Firma</h3>
+    <p class="chico suave">Va arriba de la línea de firma en las evoluciones y resúmenes en PDF.
+      Podés sacarle una foto a tu firma hecha en un papel blanco, o dibujarla con el dedo.</p>
+    ${S.db.firma ? `<div class="firma-vista"><img src="${S.db.firma.datos}" alt="Tu firma"></div>` : ''}
+    <div class="acciones">
+      <label class="btn">Subir foto de la firma<input type="file" id="foto-firma" accept="image/*" hidden></label>
+      <button class="btn" data-accion="dibujar-firma">Dibujar firma</button>
+      ${S.db.firma ? '<button class="btn peligro" data-accion="quitar-firma">Quitar firma</button>' : ''}
+    </div>
+    <p class="error-texto" id="firma-err"></p>
   </div>
 
   <div class="tarjeta">
@@ -1182,6 +1269,19 @@ function vistaAjustes() {
     <p id="resumen-datos">${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones ·
       ${S.db.pacientes.reduce((n, p) => n + (p.estudios?.length || 0), 0)} estudios</p>
   </div>`;
+  $('#foto-firma')?.addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const img = await createImageBitmap(f, { imageOrientation: 'from-image' });
+      const c = document.createElement('canvas');
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const error = guardarFirma(c, true);
+      if (error) $('#firma-err').textContent = error;
+    } catch (err) { console.error(err); $('#firma-err').textContent = 'No se pudo leer la imagen.'; }
+  });
   document.querySelectorAll('input[data-destino]').forEach(inp => inp.addEventListener('change', e => {
     const lista = [...e.target.files];
     e.target.value = ''; // permite volver a elegir los mismos archivos
@@ -1566,6 +1666,8 @@ document.addEventListener('click', ev => {
     case 'imprimir': print(); break;
     case 'pdf-evolucion': pdfEvolucion(paciente(id), (paciente(id).evoluciones || []).find(e => e.id === reg), b); break;
     case 'editar-encabezado': editarEncabezado(); break;
+    case 'dibujar-firma': dibujarFirma(); break;
+    case 'quitar-firma': if (confirm('¿Quitar la firma de los PDF?')) { delete S.db.firma; guardar(); mostrar(); } break;
     case 'resumen-pdf': dialogoResumen(paciente(id)); break;
     case 'adjuntar': editarAdjunto(id); break;
     case 'editar-adjunto': editarAdjunto(id, reg); break;
