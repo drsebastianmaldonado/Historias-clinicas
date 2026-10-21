@@ -122,7 +122,7 @@ const DBX = {
     DBX._guardarToken(await r.json());
     return DBX._token;
   },
-  async descargar(ruta) {
+  async descargar(ruta, binario = false) {
     const r = await fetch('https://content.dropboxapi.com/2/files/download', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + await DBX.token(), 'Dropbox-API-Arg': DBX.arg({ path: ruta }) },
@@ -134,7 +134,15 @@ const DBX = {
     }
     if (!r.ok) throw new Error('Dropbox respondió ' + r.status);
     const meta = JSON.parse(r.headers.get('Dropbox-API-Result') || '{}');
-    return { texto: await r.text(), rev: meta.rev };
+    return binario ? await r.arrayBuffer() : { texto: await r.text(), rev: meta.rev };
+  },
+  async borrar(ruta) {
+    const r = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + await DBX.token(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: ruta }),
+    });
+    if (!r.ok && r.status !== 409) throw new Error('Dropbox respondió ' + r.status);
   },
   async subir(ruta, texto, modo) {
     const r = await fetch('https://content.dropboxapi.com/2/files/upload', {
@@ -185,8 +193,77 @@ const Almacen = {
   },
 };
 
+// ---------- Archivos adjuntos (PDF y fotos) ----------
+// Cada archivo va cifrado aparte en «adjuntos/». Usan una clave propia guardada dentro de los datos
+// (que a su vez están cifrados con la contraseña): así cambiar la contraseña no obliga a recifrar los archivos.
+const TAM_MAXIMO = 40 * 1024 * 1024;
+const CATEGORIAS_ADJUNTO = ['Epicrisis de internación', 'Estudio', 'Informe', 'Otro'];
+async function claveAdjuntos() {
+  if (!S.db.claveAdjuntos) S.db.claveAdjuntos = aB64(crypto.getRandomValues(new Uint8Array(32)));
+  if (!S.claveAdj) S.claveAdj = await crypto.subtle.importKey('raw', deB64(S.db.claveAdjuntos), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  return S.claveAdj;
+}
+async function cifrarBytes(buf) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await claveAdjuntos(), buf);
+  const salida = new Uint8Array(12 + ct.byteLength);
+  salida.set(iv); salida.set(new Uint8Array(ct), 12);
+  return salida;
+}
+async function descifrarBytes(buf) {
+  const b = new Uint8Array(buf);
+  return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, await claveAdjuntos(), b.slice(12));
+}
+const Adjuntos = {
+  ruta: id => DBX.carpeta() + '/adjuntos/' + id + '.hca',
+  async subir(id, bytes) {
+    if (Almacen.modo() === 'local') return idb.set('adj:' + id, bytes);
+    await DBX.subir(Adjuntos.ruta(id), bytes, { '.tag': 'add' });
+  },
+  async bajar(id) {
+    const datos = Almacen.modo() === 'local' ? await idb.get('adj:' + id) : await DBX.descargar(Adjuntos.ruta(id), true);
+    if (!datos) throw new Error('El archivo no está en Dropbox.');
+    return descifrarBytes(datos);
+  },
+  async borrar(id) {
+    try {
+      if (Almacen.modo() === 'local') await idb.set('adj:' + id, null);
+      else await DBX.borrar(Adjuntos.ruta(id));
+    } catch (e) { console.error(e); } // si queda el archivo cifrado en Dropbox no molesta
+  },
+};
+// Las fotos del celular pesan varios MB: se achican a 2400 px en JPEG (sigue siendo legible un informe escaneado).
+async function prepararArchivo(f) {
+  if (/^image\/(jpeg|png|webp|heic|heif)$/.test(f.type) && f.size > 600 * 1024) {
+    try {
+      const img = await createImageBitmap(f, { imageOrientation: 'from-image' });
+      const k = Math.min(1, 2400 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
+      if (blob && blob.size < f.size) return { bytes: await blob.arrayBuffer(), tipo: 'image/jpeg', nombre: f.name.replace(/\.[^.]+$/, '') + '.jpg' };
+    } catch (e) { console.error(e); }
+  }
+  return { bytes: await f.arrayBuffer(), tipo: f.type || 'application/octet-stream', nombre: f.name };
+}
+// Sube los archivos elegidos y los agrega a la ficha. «aviso» recibe el texto de progreso.
+async function adjuntarArchivos(p, archivos, datos, aviso) {
+  p.adjuntos = p.adjuntos || [];
+  for (let i = 0; i < archivos.length; i++) {
+    const f = archivos[i];
+    if (f.size > TAM_MAXIMO) throw new Error(`«${f.name}» pesa más de 40 MB.`);
+    aviso(archivos.length > 1 ? `Subiendo ${i + 1} de ${archivos.length}: ${f.name}…` : `Subiendo ${f.name}…`);
+    const { bytes, tipo, nombre } = await prepararArchivo(f);
+    const id = nuevoId();
+    await Adjuntos.subir(id, await cifrarBytes(bytes));
+    p.adjuntos.push(Object.assign({ id, nombre, tipo, tam: bytes.byteLength, creado: new Date().toISOString() }, datos));
+  }
+}
+const tamLegible = n => n > 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+
 // ---------- Estado ----------
-const S = { clave: null, salt: null, iter: ITERACIONES, db: null, rev: null, soloLectura: false, pendiente: false };
+const S = { clave: null, salt: null, iter: ITERACIONES, db: null, rev: null, soloLectura: false, pendiente: false, claveAdj: null };
 let colaGuardado = Promise.resolve();
 
 function estadoGuardado(texto, tipo = 'ok') {
@@ -267,6 +344,8 @@ const ICONO = {
   alerta: svg('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>'),
   buscar: svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
   documento: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>'),
+  imagen: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'),
+  clip: svg('<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>'),
 };
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -303,6 +382,12 @@ const CAMPOS_ESTUDIO = [
   { k: 'fecha', t: 'Fecha', tipo: 'date' },
   { k: 'detalle', t: 'Especificar (si es «Otro»)' },
   { k: 'resultado', t: 'Resultado / informe', tipo: 'area', ancho: true },
+  { k: 'archivos', t: 'Adjuntar PDF o fotos del estudio', tipo: 'archivos' },
+];
+const CAMPOS_ADJUNTO = [
+  { k: 'categoria', t: 'Tipo de documento', tipo: 'select', ops: CATEGORIAS_ADJUNTO, req: true },
+  { k: 'fecha', t: 'Fecha', tipo: 'date' },
+  { k: 'descripcion', t: 'Descripción', ancho: true },
 ];
 
 const paciente = id => S.db.pacientes.find(p => p.id === id);
@@ -471,7 +556,8 @@ function textoCompleto(p) {
   }
   return normalizar([p.alergias, p.medicacion, p.antPersonales, p.antFamiliares,
     ...(p.evoluciones || []).flatMap(e => [e.motivo, e.texto, e.conducta]),
-    ...(p.estudios || []).flatMap(e => [e.tipo, e.detalle, e.resultado])].join(' ')) + ' ' + (textoImportado.get(p) || '');
+    ...(p.estudios || []).flatMap(e => [e.tipo, e.detalle, e.resultado]),
+    ...(p.adjuntos || []).flatMap(a => [a.categoria, a.descripcion, a.nombre])].join(' ')) + ' ' + (textoImportado.get(p) || '');
 }
 
 function filaPaciente(p) {
@@ -539,6 +625,7 @@ function vistaPaciente(id) {
     const [a, m, d] = (f || '').split('-');
     return a ? `<div class="evol-fecha"><span class="dia">${+d}</span><span class="mes">${MESES[+m - 1] || ''}</span><span class="anio">${a}</span></div>` : '<div class="evol-fecha"></div>';
   };
+  const adjuntos = [...(p.adjuntos || [])].sort((a, b) => (b.fecha || b.creado || '').localeCompare(a.fecha || a.creado || ''));
   const resumen = [['Medicación actual', p.medicacion], ['Antecedentes personales', p.antPersonales], ['Antecedentes familiares', p.antFamiliares]];
 
   $('#app').innerHTML = `
@@ -614,7 +701,21 @@ function vistaPaciente(id) {
             <header><span class="etiqueta tipo" style="--h:${(TIPOS_ESTUDIO.indexOf(e.tipo) * 47 + 200) % 360}">${esc(e.tipo === 'Otro' && e.detalle ? e.detalle : e.tipo)}</span>
               <span class="suave">${fechaLeg(e.fecha)}</span>${botonEditar('editar-estudio', e.id)}</header>
             ${e.resultado ? `<p class="pre">${esc(e.resultado)}</p>` : ''}
+            ${adjuntos.filter(a => a.estudioId === e.id).map(a => `<button class="adjunto-mini" data-accion="ver-adjunto" data-id="${qid}" data-reg="${esc(a.id)}">${ICONO.clip}<span>${esc(a.nombre)}</span></button>`).join('')}
           </article>`).join('') : '<p class="vacio">Sin estudios cargados.</p>'}
+      </section>
+
+      <section class="tarjeta seccion-archivos">
+        <div class="cabecera-seccion"><h2>Archivos <span class="cuenta">${adjuntos.length || ''}</span></h2>${botonAgregar('adjuntar', 'Adjuntar')}</div>
+        ${adjuntos.length ? `<ul class="adjuntos">${adjuntos.map(a => `
+          <li>
+            <button class="adjunto" data-accion="ver-adjunto" data-id="${qid}" data-reg="${esc(a.id)}">
+              <span class="adjunto-icono ${a.tipo === 'application/pdf' ? 'pdf' : ''}">${a.tipo.startsWith('image/') ? ICONO.imagen : ICONO.documento}</span>
+              <span class="adjunto-info"><span class="adjunto-nombre">${esc(a.descripcion || a.nombre)}</span>
+                <span class="adjunto-det">${esc([a.categoria, fechaLeg(a.fecha), tamLegible(a.tam)].filter(Boolean).join(' · '))}</span></span>
+            </button>
+            ${botonEditar('editar-adjunto', a.id)}
+          </li>`).join('')}</ul>` : '<p class="vacio">Sin archivos. Podés adjuntar epicrisis, informes o estudios en PDF o foto.</p>'}
       </section>
     </aside>
   </div>
@@ -628,10 +729,11 @@ function campoHTML(c, v) {
   const val = esc(v ?? '');
   const req = c.req ? ' required' : '';
   let input;
-  if (c.tipo === 'area') input = `<textarea name="${c.k}"${req}>${val}</textarea>`;
+  if (c.tipo === 'archivos') input = `<input name="${c.k}" type="file" multiple accept="application/pdf,image/*"${req}><small class="ayuda">PDF o fotos. En el celular podés sacar la foto en el momento.</small>`;
+  else if (c.tipo === 'area') input = `<textarea name="${c.k}"${req}>${val}</textarea>`;
   else if (c.tipo === 'select') input = `<select name="${c.k}"${req}>${c.ops.map(o => `<option${o === (v ?? '') ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
   else input = `<input name="${c.k}" type="${c.tipo || 'text'}" value="${val}"${req} autocomplete="off">`;
-  return `<label class="campo${c.tipo === 'area' || c.ancho ? ' ancho' : ''}"><span>${c.t}${c.req ? ' *' : ''}</span>${input}</label>`;
+  return `<label class="campo${c.tipo === 'area' || c.tipo === 'archivos' || c.ancho ? ' ancho' : ''}"><span>${c.t}${c.req ? ' *' : ''}</span>${input}</label>`;
 }
 
 function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Eliminar' }) {
@@ -651,12 +753,19 @@ function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBo
     if (b.dataset.dlg === 'cancelar') cerrar();
     if (b.dataset.dlg === 'borrar' && onBorrar() !== false) cerrar();
   };
-  form.onsubmit = ev => {
+  form.onsubmit = async ev => {
     ev.preventDefault();
     const datos = {};
-    for (const c of campos) datos[c.k] = (form.elements[c.k].value || '').trim();
-    const error = onGuardar(datos);
-    if (error) { $('#dlg-err').textContent = error; return; }
+    for (const c of campos) datos[c.k] = c.tipo === 'archivos' ? [...form.elements[c.k].files] : (form.elements[c.k].value || '').trim();
+    const err = $('#dlg-err'), botones = form.querySelectorAll('.pie-dialogo button');
+    botones.forEach(b => { b.disabled = true; });
+    err.classList.add('progreso-texto');
+    let error;
+    try { error = await onGuardar(datos, texto => { err.textContent = texto; }); }
+    catch (e) { console.error(e); error = 'No se pudo subir: ' + e.message; }
+    botones.forEach(b => { b.disabled = false; });
+    err.classList.remove('progreso-texto');
+    if (error) { err.textContent = error; return; }
     cerrar();
   };
   dlg.showModal();
@@ -682,10 +791,70 @@ function editarPaciente(id) {
     textoBorrar: 'Eliminar paciente',
   });
 }
+function editarAdjunto(id, adjId) {
+  const p = paciente(id);
+  const adj = adjId ? (p.adjuntos || []).find(a => a.id === adjId) : null;
+  formulario({
+    titulo: (adj ? 'Editar archivo' : 'Adjuntar PDF o fotos') + ' — ' + nombreCompleto(p),
+    campos: adj ? CAMPOS_ADJUNTO : [...CAMPOS_ADJUNTO, { k: 'archivos', t: 'Archivos', tipo: 'archivos', req: true }],
+    valores: adj || { categoria: CATEGORIAS_ADJUNTO[0], fecha: hoyISO() },
+    async onGuardar(d, aviso) {
+      if (adj) Object.assign(adj, d, { modificado: new Date().toISOString() });
+      else {
+        const archivos = d.archivos; delete d.archivos;
+        if (!archivos.length) return 'Elegí al menos un archivo.';
+        await adjuntarArchivos(p, archivos, d, aviso);
+      }
+      guardar(); mostrar();
+    },
+    onBorrar: adj ? () => {
+      if (!confirm(`¿Eliminar «${adj.nombre}»? No se puede deshacer.`)) return false;
+      p.adjuntos = p.adjuntos.filter(a => a !== adj);
+      Adjuntos.borrar(adj.id);
+      guardar(); mostrar();
+    } : null,
+  });
+}
+
+let urlVisor = null;
+async function verAdjunto(id, adjId) {
+  const adj = (paciente(id).adjuntos || []).find(a => a.id === adjId);
+  if (!adj) return;
+  const dlg = $('#visor');
+  const cuerpo = $('#visor-cuerpo');
+  $('#visor-titulo').textContent = adj.descripcion || adj.nombre;
+  $('#visor-acciones').innerHTML = '';
+  cuerpo.innerHTML = '<p class="suave visor-mensaje">Descargando y descifrando…</p>';
+  if (!dlg.open) dlg.showModal();
+  try {
+    const datos = await Adjuntos.bajar(adj.id);
+    if (urlVisor) URL.revokeObjectURL(urlVisor);
+    urlVisor = URL.createObjectURL(new Blob([datos], { type: adj.tipo }));
+    const esImagen = adj.tipo.startsWith('image/'), esPdf = adj.tipo === 'application/pdf';
+    $('#visor-acciones').innerHTML = `
+      <a class="btn chico" href="${urlVisor}" target="_blank" rel="noopener">Abrir en pestaña nueva</a>
+      <a class="btn chico" href="${urlVisor}" download="${esc(adj.nombre)}">Descargar</a>`;
+    cuerpo.innerHTML = esImagen ? `<img src="${urlVisor}" alt="${esc(adj.nombre)}">`
+      : esPdf && matchMedia('(min-width: 601px)').matches ? `<iframe src="${urlVisor}" title="${esc(adj.nombre)}"></iframe>`
+      : `<p class="visor-mensaje">${esc(adj.nombre)} (${tamLegible(adj.tam)})<br><span class="suave">Tocá «Abrir en pestaña nueva» para verlo.</span></p>`;
+  } catch (e) {
+    console.error(e);
+    cuerpo.innerHTML = `<p class="error-texto visor-mensaje">No se pudo abrir el archivo: ${esc(e.message)}</p>`;
+  }
+}
+const cerrarVisor = () => $('#visor').close();
+// También se cierra con Esc: al cerrarse por cualquier vía se libera el archivo descifrado.
+$('#visor').addEventListener('close', () => {
+  $('#visor-cuerpo').innerHTML = '';
+  $('#visor-acciones').innerHTML = '';
+  if (urlVisor) { URL.revokeObjectURL(urlVisor); urlVisor = null; }
+});
+
 function borrarPaciente(p) {
   const n = prompt(`Para eliminar a ${nombreCompleto(p)} con todas sus evoluciones y estudios, escribí ELIMINAR:`);
   if (!n || n.trim().toUpperCase() !== 'ELIMINAR') return false;
   S.db.pacientes = S.db.pacientes.filter(x => x !== p);
+  (p.adjuntos || []).forEach(a => Adjuntos.borrar(a.id));
   guardar();
   location.hash = '#/';
 }
@@ -703,14 +872,24 @@ function editarRegistro(id, lista, regId) {
     titulo: (reg ? 'Editar ' : 'Nueva ') + (esEvol ? 'evolución' : 'estudio') + ' — ' + nombreCompleto(p),
     campos: esEvol ? CAMPOS_EVOLUCION : CAMPOS_ESTUDIO,
     valores: reg || { fecha: hoyISO(), tipo: filtroEstudio[id] || '' },
-    onGuardar(d) {
+    async onGuardar(d, aviso) {
+      const archivos = d.archivos || [];
+      delete d.archivos;
+      const destino = reg || Object.assign({ id: nuevoId(), creado: new Date().toISOString() }, d);
+      if (archivos.length) {
+        const nombre = d.tipo === 'Otro' && d.detalle ? d.detalle : d.tipo;
+        await adjuntarArchivos(p, archivos, { categoria: 'Estudio', fecha: d.fecha, descripcion: nombre, estudioId: destino.id }, aviso);
+      }
       if (reg) Object.assign(reg, d, { modificado: new Date().toISOString() });
-      else p[lista].push(Object.assign({ id: nuevoId(), creado: new Date().toISOString() }, d));
+      else p[lista].push(destino);
       guardar(); mostrar();
     },
     onBorrar: reg ? () => {
-      if (!confirm('¿Eliminar este registro? No se puede deshacer.')) return false;
-      p[lista] = p[lista].filter(r => r !== reg); guardar(); mostrar();
+      const deEste = (p.adjuntos || []).filter(a => a.estudioId === reg.id);
+      if (!confirm('¿Eliminar este registro?' + (deEste.length ? ` También se borran sus ${deEste.length} archivo(s) adjunto(s).` : '') + ' No se puede deshacer.')) return false;
+      p[lista] = p[lista].filter(r => r !== reg);
+      if (deEste.length) { p.adjuntos = p.adjuntos.filter(a => !deEste.includes(a)); deEste.forEach(a => Adjuntos.borrar(a.id)); }
+      guardar(); mostrar();
     } : null,
   });
 }
@@ -728,10 +907,14 @@ function vistaAjustes() {
       ? '<p>Modo prueba: los datos están solo en este navegador, <b>sin backup</b>.</p>'
       : `<p>Archivo principal: <b>${esc(DBX.ruta())}</b> en tu Dropbox.<br>
          Copia diaria en <b>${esc(DBX.carpeta())}/copias/</b>${pref.get('ultimoBackup') ? ' (última: ' + fechaLeg(pref.get('ultimoBackup')) + ')' : ''}.
+         Los PDF y fotos adjuntos están en <b>${esc(DBX.carpeta())}/adjuntos/</b>.
          Además, Dropbox guarda el historial de versiones de cada archivo.</p>`}
     <p class="chico suave">Todos los archivos están cifrados con tu contraseña: sin ella no se pueden leer.</p>
     <div class="acciones">
       <button class="btn" data-accion="descargar-copia">Descargar copia cifrada a esta computadora</button>
+    </div>
+    <p class="chico suave" style="margin-bottom:0">La copia descargada tiene todas las historias; los PDF y fotos adjuntos quedan en Dropbox.</p>
+    <div>
     </div>
   </div>
 
@@ -1153,6 +1336,10 @@ document.addEventListener('click', ev => {
     case 'editar-estudio': editarRegistro(id, 'estudios', reg); break;
     case 'filtro-estudio': filtroEstudio[id] = tipo; mostrar(); break;
     case 'imprimir': print(); break;
+    case 'adjuntar': editarAdjunto(id); break;
+    case 'editar-adjunto': editarAdjunto(id, reg); break;
+    case 'ver-adjunto': verAdjunto(id, reg); break;
+    case 'cerrar-visor': cerrarVisor(); break;
     case 'descargar-copia': descargarCopia(); break;
     case 'cambiar-clave': cambiarClave(); break;
     case 'borrar-paciente': borrarPaciente(paciente(id)); break;

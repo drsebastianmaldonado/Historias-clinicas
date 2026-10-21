@@ -263,6 +263,33 @@ details > summary { cursor: pointer; font-weight: 600; }
 .importada td, .importada th { border: 1px solid var(--borde); padding: 4px 6px; vertical-align: top; }
 .pie-ficha { text-align: right; margin: 4px 0 24px; }
 
+/* ---------- Archivos adjuntos ---------- */
+.adjuntos { list-style: none; margin: 0; padding: 0; }
+.adjuntos li { display: flex; align-items: center; gap: 4px; }
+.adjuntos li + li { border-top: 1px solid var(--borde); }
+.adjunto { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 6px; margin-left: -6px; border: 0; background: none; border-radius: 10px; cursor: pointer; text-align: left; }
+.adjunto:hover { background: var(--panel-2); }
+.adjunto-icono { display: inline-grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 9px; background: var(--primario-suave); color: var(--primario); }
+.adjunto-icono.pdf { background: var(--alerta-fondo); color: var(--alerta); }
+.adjunto-info { min-width: 0; display: flex; flex-direction: column; }
+.adjunto-nombre { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adjunto-det { font-size: 12px; color: var(--suave); }
+.adjunto-mini { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: 8px 6px 0 0; padding: 4px 10px; font-size: 13px; border: 1px solid var(--borde); border-radius: 99px; background: var(--panel-2); color: var(--primario); cursor: pointer; }
+.adjunto-mini span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adjunto-mini svg { width: 14px; height: 14px; }
+.ayuda { display: block; margin-top: 5px; font-size: 12px; color: var(--tenue); }
+.campo input[type=file] { padding: 8px; background: var(--panel-2); }
+.progreso-texto { color: var(--suave); }
+
+#visor { width: min(1000px, calc(100vw - 24px)); height: calc(100vh - 48px); display: none; flex-direction: column; }
+#visor[open] { display: flex; }
+.visor-cab { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--borde); }
+.visor-cab h2 { margin: 0; font-size: 17px; flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#visor-cuerpo { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; justify-content: center; background: var(--panel-2); }
+#visor-cuerpo img { max-width: 100%; height: auto; display: block; margin: auto; }
+#visor-cuerpo iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.visor-mensaje { margin: auto; padding: 24px; text-align: center; }
+
 /* ---------- Diálogo ---------- */
 dialog {
   border: 1px solid var(--borde); border-radius: 18px; padding: 0;
@@ -291,7 +318,8 @@ dialog::backdrop { background: rgba(15, 20, 26, .5); backdrop-filter: blur(2px);
   .seccion-resumen { order: 1; }
   .seccion-evol { order: 2; }
   .seccion-estudios { order: 3; }
-  .seccion-historia { order: 4; }
+  .seccion-archivos { order: 4; }
+  .seccion-historia { order: 5; }
   .ficha-cuerpo .tarjeta { width: 100%; }
 }
 @media (max-width: 600px) {
@@ -319,6 +347,7 @@ dialog::backdrop { background: rgba(15, 20, 26, .5); backdrop-filter: blur(2px);
   .evol-fecha .dia { font-size: 17px; }
   .centro { margin-top: 4vh; padding: 24px; }
   dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
+  .visor-cab { padding-top: max(14px, env(safe-area-inset-top)); }
   #dlg-form { padding: 18px 16px 0; padding-top: max(18px, env(safe-area-inset-top)); }
   .pie-dialogo { margin: 8px -16px 0; padding-left: 16px; padding-right: 16px; }
 }

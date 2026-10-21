@@ -12,6 +12,9 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
   (PBKDF2-SHA256, 600.000 iteraciones). Dropbox, GitHub o cualquiera que obtenga el archivo ve solo texto ilegible.
 - **Backup:** cada día que hay cambios se guarda además una copia en `/historias clínicas/copias/historias-AAAA-MM-DD.hc`,
   y Dropbox conserva el historial de versiones de cada archivo. Desde *Ajustes* se puede bajar una copia cifrada a la computadora.
+- **Archivos adjuntos** (PDF y fotos de estudios, epicrisis, informes): cada uno se guarda cifrado aparte en
+  `/historias clínicas/adjuntos/`. Usan una clave propia guardada dentro de los datos cifrados, así cambiar la contraseña
+  no obliga a recifrarlos. Las fotos grandes se achican a 2400 px (JPEG) antes de subirlas.
 - La contraseña no se guarda en ningún lado. **Si se pierde, los datos no se pueden recuperar.**
 - La app se bloquea sola tras 15 minutos sin uso (configurable en `config.js`).
 - En el celular se abre la misma dirección; si no hay conexión muestra la última copia guardada, solo para leer.
