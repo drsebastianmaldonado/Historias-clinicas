@@ -962,23 +962,35 @@ async function leerWord(f) {
   return { html, texto };
 }
 
+const numeroDe = f => f.name.replace(/\.(docx?|odt)$/i, '').trim();
+
 // Separa los Word de lo demás que venga en la selección (temporales «~$…» de Word, PDF, imágenes…).
 // La carpeta entera incluye las subcarpetas; ahí el nombre lleva la ruta.
 function separarArchivos(lista) {
-  const word = [], temporales = [], otros = [];
+  let word = [];
+  const temporales = [], otros = [];
   for (const f of lista) {
     if (/^~\$/.test(f.name) || /^\./.test(f.name)) temporales.push(f);
     else if (/\.(docx?|odt)$/i.test(f.name)) word.push(f);
     else otros.push(f);
   }
+  // Una misma historia guardada en varios formatos (.doc, .docx, .odt): se usa la modificada más recientemente.
+  const totalWord = word.length;
+  const grupos = new Map();
+  for (const f of word) { const n = numeroDe(f); grupos.set(n, [...(grupos.get(n) || []), f]); }
+  const repetidas = [...grupos.values()].filter(g => g.length > 1).map(g => g.sort((a, b) => b.lastModified - a.lastModified));
+  word = [...grupos.values()].map(g => g[0]);
   word.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   const ruta = f => f.webkitRelativePath || f.name;
+  const fechaArchivo = f => new Date(f.lastModified).toLocaleDateString('es-AR');
   const porExt = {};
   for (const f of otros) { const e = (f.name.match(/\.[^.]+$/) || ['sin extensión'])[0].toLowerCase(); porExt[e] = (porExt[e] || 0) + 1; }
-  const resumen = `<p class="chico">Recibidos <b>${lista.length}</b> archivos: <b>${word.length}</b> de Word`
+  const resumen = `<p class="chico">Recibidos <b>${lista.length}</b> archivos: <b>${totalWord}</b> de Word${repetidas.length ? ` (${word.length} historias distintas)` : ''}`
     + (temporales.length ? `, ${temporales.length} temporales u ocultos (ignorados)` : '')
     + (otros.length ? `, ${otros.length} de otro tipo (ignorados: ${Object.entries(porExt).map(([e, n]) => `${esc(e)} ×${n}`).join(', ')})` : '') + '.</p>'
-    + (otros.length ? `<details><summary class="chico">Ver archivos ignorados</summary><ul class="chico">${otros.map(f => `<li>${esc(ruta(f))}</li>`).join('')}</ul></details>` : '');
+    + (otros.length ? `<details><summary class="chico">Ver archivos ignorados</summary><ul class="chico">${otros.map(f => `<li>${esc(ruta(f))}</li>`).join('')}</ul></details>` : '')
+    + (repetidas.length ? `<details><summary class="chico">${repetidas.length} historias están guardadas en más de un formato: se usa la versión modificada más recientemente</summary>
+      <ul class="chico">${repetidas.map(g => `<li><b>${esc(g[0].name)}</b> (${fechaArchivo(g[0])}); no se usa${g.length > 2 ? 'n' : ''}: ${g.slice(1).map(f => `${esc(f.name)} (${fechaArchivo(f)})`).join(', ')}</li>`).join('')}</ul></details>` : '');
   return { word, resumen };
 }
 
@@ -993,36 +1005,32 @@ async function revisarWord(archivos) {
   zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="rev-estado"></p>`;
   const barra = $('.progreso > div', zona), estado = $('#rev-estado');
   const porNumero = new Map(S.db.pacientes.filter(p => p.numero).map(p => [String(p.numero), p]));
-  const vistos = new Map();
-  const faltan = [], repetidos = [], ilegibles = [], sinConsultas = [], dudosas = [];
+  const enlace = p => `<a href="#/p/${encodeURIComponent(p.id)}">${esc(p.numero)} · ${esc(nombreCompleto(p))}</a>`;
+  const faltan = [], desactualizadas = [], ilegibles = [], sinConsultas = [], dudosas = [];
   for (let i = 0; i < archivos.length; i++) {
     const f = archivos[i];
     estado.textContent = `Revisando ${i + 1} de ${archivos.length}: ${f.name}`;
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
-    const numero = f.name.replace(/\.(docx?|odt)$/i, '').trim();
-    const ruta = f.webkitRelativePath || f.name;
-    if (vistos.has(numero)) repetidos.push(`${ruta} y ${vistos.get(numero)}`);
-    vistos.set(numero, ruta);
+    const numero = numeroDe(f);
     const p = porNumero.get(numero);
     let texto;
     try { texto = (await leerWord(f)).texto; } catch { ilegibles.push(f.name); continue; }
     if (!p) { faltan.push(f.name); continue; }
+    if (p.importado?.archivo && p.importado.archivo !== f.name) desactualizadas.push(enlace(p) + ` <span class="suave">(en la app: ${esc(p.importado.archivo)}; más nuevo: ${esc(f.name)})</span>`);
     const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
     // No cuenta las listas de resultados («ETT:» / «11/2013: …» / «29/4/2014: …»).
     const sospechosas = lineas.filter((l, j) => FECHA_CON_TEXTO.test(l) && !/:\s*$/.test(lineas[j - 1] || '') && !/^\d{1,2}\s*[\/\-.]\s*\d{1,4}/.test(lineas[j - 1] || ''));
-    if (dudosas.some(d => d.p === p) || sinConsultas.includes(p)) continue; // archivo repetido: ya revisado
     if (sospechosas.length) dudosas.push({ p, ejemplo: sospechosas[0], n: sospechosas.length });
     else if (!extraerConsultas(texto).length) sinConsultas.push(p);
     if (i % 10 === 9) await new Promise(r => setTimeout(r));
   }
-  const enlace = p => `<a href="#/p/${encodeURIComponent(p.id)}">${esc(p.numero)} · ${esc(nombreCompleto(p))}</a>`;
   const bloque = (titulo, ayuda, items) => items.length ? `<details><summary>${titulo}: ${items.length}</summary>
     <p class="chico suave">${ayuda}</p><ul class="chico">${items.map(x => `<li>${x}</li>`).join('')}</ul></details>` : '';
-  const todoBien = !faltan.length && !repetidos.length && !ilegibles.length && !sinConsultas.length && !dudosas.length;
+  const todoBien = !faltan.length && !desactualizadas.length && !ilegibles.length && !sinConsultas.length && !dudosas.length;
   zona.innerHTML = resumen + `<p><b>Revisados ${archivos.length} archivos de Word.</b> ${todoBien ? 'No se encontraron problemas.' : ''}</p>
     ${bloque('No están en la app', 'Estos archivos no se importaron. Probá importarlos de nuevo.', faltan.map(esc))}
     ${bloque('No se pudieron leer', 'Pueden estar dañados o protegidos con contraseña. Abrilos en Word y guardalos de nuevo.', ilegibles.map(esc))}
-    ${bloque('Archivos con el mismo número', 'Quedaron juntos en un solo paciente: el último importado reemplazó al otro.', repetidos.map(esc))}
+    ${bloque('Con una versión más nueva sin importar', 'La historia está en más de un formato y en la app quedó una versión más vieja. Importá la carpeta entera otra vez para actualizarlas.', desactualizadas)}
     ${bloque('Fechas pegadas al texto', 'Estas fichas tienen renglones que empiezan con una fecha seguida de texto: puede ser una consulta que no se separó. Se muestra el primero.',
       dudosas.map(d => `${enlace(d.p)}<br><span class="suave">«${esc(d.ejemplo.slice(0, 90))}»${d.n > 1 ? ` y ${d.n - 1} más` : ''}</span>`))}
     ${bloque('Sin ninguna consulta separada', 'El Word no tiene fechas solas en un renglón. La historia está completa en «Historia original completa».', sinConsultas.map(enlace))}`;
@@ -1045,7 +1053,7 @@ async function importarWord(archivos) {
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
     try {
       const { html, texto } = await leerWord(f);
-      const numero = f.name.replace(/\.(docx?|odt)$/i, '').trim();
+      const numero = numeroDe(f);
       const datos = extraerDatos(texto);
       const consultas = extraerConsultas(texto);
       evoluciones += consultas.length;
