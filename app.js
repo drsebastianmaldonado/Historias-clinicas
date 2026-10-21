@@ -693,7 +693,10 @@ function vistaAjustes() {
     <h2>Importar historias de Word</h2>
     <p class="chico">Seleccioná los archivos de Word, <b>.doc</b> o <b>.docx</b> (podés elegir todos juntos). El nombre de cada archivo se toma como N° de historia
       y cada consulta con fecha pasa a ser una evolución; el Word completo queda en «Historia original completa». Si un N° ya existe, se actualiza lo que vino del Word sin tocar lo cargado en la app.</p>
-    <label class="btn primario">Elegir archivos Word…<input type="file" id="archivos-word" accept=".docx,.doc" multiple hidden></label>
+    <div class="acciones">
+      <label class="btn primario">Elegir archivos Word…<input type="file" data-destino="importar" accept=".docx,.doc" multiple hidden></label>
+      <label class="btn">Elegir carpeta entera…<input type="file" data-destino="importar" webkitdirectory multiple hidden></label>
+    </div>
     <div id="importacion" style="margin-top:12px"></div>
   </div>
 
@@ -701,7 +704,10 @@ function vistaAjustes() {
     <h2>Revisar importación</h2>
     <p class="chico">Elegí otra vez todos los Word: la app los compara con lo cargado <b>sin cambiar nada</b> y te muestra qué archivos
       no están en la app y en qué fichas puede haber consultas que no se separaron.</p>
-    <label class="btn">Elegir archivos para revisar…<input type="file" id="archivos-revisar" accept=".docx,.doc" multiple hidden></label>
+    <div class="acciones">
+      <label class="btn">Elegir archivos para revisar…<input type="file" data-destino="revisar" accept=".docx,.doc" multiple hidden></label>
+      <label class="btn">Elegir carpeta entera…<input type="file" data-destino="revisar" webkitdirectory multiple hidden></label>
+    </div>
     <div id="revision" style="margin-top:12px"></div>
   </div>
 
@@ -719,10 +725,11 @@ function vistaAjustes() {
     <p>${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones ·
       ${S.db.pacientes.reduce((n, p) => n + (p.estudios?.length || 0), 0)} estudios</p>
   </div>`;
-  const inp = $('#archivos-word');
-  if (inp) inp.addEventListener('change', e => importarWord([...e.target.files]));
-  const rev = $('#archivos-revisar');
-  if (rev) rev.addEventListener('change', e => revisarWord([...e.target.files]));
+  document.querySelectorAll('input[data-destino]').forEach(inp => inp.addEventListener('change', e => {
+    const lista = [...e.target.files];
+    e.target.value = ''; // permite volver a elegir los mismos archivos
+    (inp.dataset.destino === 'importar' ? importarWord : revisarWord)(lista);
+  }));
 }
 
 function descargarCopia() {
@@ -898,26 +905,47 @@ async function leerWord(f) {
   return { html, texto };
 }
 
+// Separa los Word de lo demás que venga en la selección (temporales «~$…» de Word, PDF, imágenes…).
+// La carpeta entera incluye las subcarpetas; ahí el nombre lleva la ruta.
+function separarArchivos(lista) {
+  const word = [], temporales = [], otros = [];
+  for (const f of lista) {
+    if (/^~\$/.test(f.name) || /^\./.test(f.name)) temporales.push(f);
+    else if (/\.docx?$/i.test(f.name)) word.push(f);
+    else otros.push(f);
+  }
+  word.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  const ruta = f => f.webkitRelativePath || f.name;
+  const porExt = {};
+  for (const f of otros) { const e = (f.name.match(/\.[^.]+$/) || ['sin extensión'])[0].toLowerCase(); porExt[e] = (porExt[e] || 0) + 1; }
+  const resumen = `<p class="chico">Recibidos <b>${lista.length}</b> archivos: <b>${word.length}</b> de Word`
+    + (temporales.length ? `, ${temporales.length} temporales u ocultos (ignorados)` : '')
+    + (otros.length ? `, ${otros.length} de otro tipo (ignorados: ${Object.entries(porExt).map(([e, n]) => `${esc(e)} ×${n}`).join(', ')})` : '') + '.</p>'
+    + (otros.length ? `<details><summary class="chico">Ver archivos ignorados</summary><ul class="chico">${otros.map(f => `<li>${esc(ruta(f))}</li>`).join('')}</ul></details>` : '');
+  return { word, resumen };
+}
+
 // Renglón que empieza con una fecha completa seguida de texto: puede ser una consulta que no se separó.
 const FECHA_CON_TEXTO = /^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})\s*[:\-–.,]?\s+\S/;
 
 async function revisarWord(archivos) {
   const zona = $('#revision');
-  archivos = archivos.filter(f => !/^~\$/.test(f.name));
-  if (!archivos.length) return;
+  const { word, resumen } = separarArchivos(archivos);
+  archivos = word;
+  if (!archivos.length) { zona.innerHTML = resumen; return; }
   zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="rev-estado"></p>`;
   const barra = $('.progreso > div', zona), estado = $('#rev-estado');
   const porNumero = new Map(S.db.pacientes.filter(p => p.numero).map(p => [String(p.numero), p]));
   const vistos = new Map();
   const faltan = [], repetidos = [], ilegibles = [], sinConsultas = [], dudosas = [];
-  archivos.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   for (let i = 0; i < archivos.length; i++) {
     const f = archivos[i];
     estado.textContent = `Revisando ${i + 1} de ${archivos.length}: ${f.name}`;
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
     const numero = f.name.replace(/\.docx?$/i, '').trim();
-    if (vistos.has(numero)) repetidos.push(`${f.name} y ${vistos.get(numero)}`);
-    vistos.set(numero, f.name);
+    const ruta = f.webkitRelativePath || f.name;
+    if (vistos.has(numero)) repetidos.push(`${ruta} y ${vistos.get(numero)}`);
+    vistos.set(numero, ruta);
     const p = porNumero.get(numero);
     let texto;
     try { texto = (await leerWord(f)).texto; } catch { ilegibles.push(f.name); continue; }
@@ -925,6 +953,7 @@ async function revisarWord(archivos) {
     const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
     // No cuenta las listas de resultados («ETT:» / «11/2013: …» / «29/4/2014: …»).
     const sospechosas = lineas.filter((l, j) => FECHA_CON_TEXTO.test(l) && !/:\s*$/.test(lineas[j - 1] || '') && !/^\d{1,2}\s*[\/\-.]\s*\d{1,4}/.test(lineas[j - 1] || ''));
+    if (dudosas.some(d => d.p === p) || sinConsultas.includes(p)) continue; // archivo repetido: ya revisado
     if (sospechosas.length) dudosas.push({ p, ejemplo: sospechosas[0], n: sospechosas.length });
     else if (!extraerConsultas(texto).length) sinConsultas.push(p);
     if (i % 10 === 9) await new Promise(r => setTimeout(r));
@@ -933,7 +962,7 @@ async function revisarWord(archivos) {
   const bloque = (titulo, ayuda, items) => items.length ? `<details><summary>${titulo}: ${items.length}</summary>
     <p class="chico suave">${ayuda}</p><ul class="chico">${items.map(x => `<li>${x}</li>`).join('')}</ul></details>` : '';
   const todoBien = !faltan.length && !repetidos.length && !ilegibles.length && !sinConsultas.length && !dudosas.length;
-  zona.innerHTML = `<p><b>Revisados ${archivos.length} archivos.</b> ${todoBien ? 'No se encontraron problemas.' : ''}</p>
+  zona.innerHTML = resumen + `<p><b>Revisados ${archivos.length} archivos de Word.</b> ${todoBien ? 'No se encontraron problemas.' : ''}</p>
     ${bloque('No están en la app', 'Estos archivos no se importaron. Probá importarlos de nuevo.', faltan.map(esc))}
     ${bloque('No se pudieron leer', 'Pueden estar dañados o protegidos con contraseña. Abrilos en Word y guardalos de nuevo.', ilegibles.map(esc))}
     ${bloque('Archivos con el mismo número', 'Quedaron juntos en un solo paciente: el último importado reemplazó al otro.', repetidos.map(esc))}
@@ -944,20 +973,19 @@ async function revisarWord(archivos) {
 
 async function importarWord(archivos) {
   const zona = $('#importacion');
-  if (!archivos.length) return;
+  const { word, resumen } = separarArchivos(archivos);
+  archivos = word;
+  if (!archivos.length) { zona.innerHTML = resumen; return; }
   if (!window.mammoth || !window.leerDoc) { zona.innerHTML = '<p class="error-texto">No se cargó el lector de Word. Recargá la página.</p>'; return; }
   zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="imp-estado"></p>`;
   const barra = $('.progreso > div', zona), estado = $('#imp-estado');
   let nuevos = 0, actualizados = 0, evoluciones = 0;
   const errores = [];
   const porNumero = new Map(S.db.pacientes.filter(p => p.numero).map(p => [String(p.numero), p]));
-  archivos.sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
   for (let i = 0; i < archivos.length; i++) {
     const f = archivos[i];
     estado.textContent = `Leyendo ${i + 1} de ${archivos.length}: ${f.name}`;
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
-    if (/^~\$/.test(f.name)) continue; // archivos temporales de Word
-    if (!/\.docx?$/i.test(f.name)) { errores.push(f.name + ': no es un archivo de Word'); continue; }
     try {
       const { html, texto } = await leerWord(f);
       const numero = f.name.replace(/\.docx?$/i, '').trim();
@@ -989,7 +1017,7 @@ async function importarWord(archivos) {
   }
   estado.textContent = 'Guardando…';
   if (nuevos || actualizados) await guardar();
-  zona.innerHTML = `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados, ${evoluciones} consultas separadas${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
+  zona.innerHTML = resumen + `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados, ${evoluciones} consultas separadas${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
     ${errores.length ? `<details><summary>Ver archivos con problemas</summary><ul class="chico">${errores.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}
     ${S.pendiente ? '<p class="error-texto">Ojo: no se pudo guardar en Dropbox. Revisá el aviso de arriba.</p>' : ''}
     <p class="chico suave">Revisá algunas fichas: los datos que no se reconocieron automáticamente (nombre, fecha de nacimiento u obra social) se pueden completar con «Editar datos».</p>`;
