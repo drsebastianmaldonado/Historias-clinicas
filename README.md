@@ -33,7 +33,7 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
 *Ajustes → Importar historias de Word*: se eligen todos los `.docx` juntos. El nombre del archivo (por ejemplo `245.docx`)
 pasa a ser el N° de historia y el contenido completo queda en la ficha como «Historia anterior». Se intentan reconocer
 nombre, fecha de nacimiento y obra social (con o sin etiquetas como «Nombre:», «FN:», «OS:»); lo que no se reconozca se completa a mano.
-Los `.doc` antiguos hay que guardarlos antes como `.docx`.
+Lee tanto `.docx` como los `.doc` antiguos (Word 97-2003; de estos se importa solo el texto, sin negritas ni tablas).
 
 ## Probar sin Dropbox
 
@@ -43,3 +43,4 @@ En la primera pantalla, **Usar en modo prueba** guarda todo solo en ese navegado
 
 Es HTML/CSS/JS sin compilación. Para probar en la computadora: `python3 -m http.server` y abrir `http://localhost:8000`.
 `vendor/mammoth.browser.min.js` es [mammoth 1.11.0](https://github.com/mwilliamson/mammoth.js) (licencia BSD-2, ver `vendor/mammoth-LICENSE.txt`).
+`vendor/lector-doc.min.js` empaqueta [word-extractor 1.0.4](https://github.com/morungos/node-word-extractor) (licencia MIT, ver `vendor/word-extractor-LICENSE.txt`) para leer los `.doc`.

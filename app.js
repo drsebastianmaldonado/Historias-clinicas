@@ -679,7 +679,7 @@ function vistaAjustes() {
 
   ${ro ? '' : `<div class="tarjeta">
     <h2>Importar historias de Word</h2>
-    <p class="chico">Seleccioná los archivos <b>.docx</b> (podés elegir todos juntos). El nombre de cada archivo se toma como N° de historia
+    <p class="chico">Seleccioná los archivos de Word, <b>.doc</b> o <b>.docx</b> (podés elegir todos juntos). El nombre de cada archivo se toma como N° de historia
       y el contenido completo queda guardado en la ficha como «Historia anterior». Si un N° ya existe, se actualiza su historia anterior sin tocar lo cargado en la app.</p>
     <label class="btn primario">Elegir archivos Word…<input type="file" id="archivos-word" accept=".docx,.doc" multiple hidden></label>
     <div id="importacion" style="margin-top:12px"></div>
@@ -817,10 +817,28 @@ function extraerDatos(texto) {
   return d;
 }
 
+// .docx con mammoth (conserva negritas y tablas); .doc (Word 97-2003) con word-extractor, solo texto.
+async function leerWord(f) {
+  const buf = await f.arrayBuffer();
+  const firma = new Uint8Array(buf.slice(0, 2));
+  if (firma[0] === 0xd0 && firma[1] === 0xcf) {
+    const { cuerpo, encabezados } = await window.leerDoc(buf);
+    const texto = [encabezados, cuerpo].filter(t => t && t.trim()).join('\n').replace(/\t+/g, '  ');
+    const html = texto.split('\n').map(l => l.trim() ? `<p>${esc(l)}</p>` : '').join('');
+    return { html, texto };
+  }
+  const opciones = { convertImage: mammoth.images.imgElement(() => ({ src: '' })) };
+  const [{ value: html }, { value: texto }] = await Promise.all([
+    mammoth.convertToHtml({ arrayBuffer: buf }, opciones),
+    mammoth.extractRawText({ arrayBuffer: buf }),
+  ]);
+  return { html, texto };
+}
+
 async function importarWord(archivos) {
   const zona = $('#importacion');
   if (!archivos.length) return;
-  if (!window.mammoth) { zona.innerHTML = '<p class="error-texto">No se cargó el lector de Word. Recargá la página.</p>'; return; }
+  if (!window.mammoth || !window.leerDoc) { zona.innerHTML = '<p class="error-texto">No se cargó el lector de Word. Recargá la página.</p>'; return; }
   zona.innerHTML = `<div class="progreso"><div></div></div><p class="chico suave" id="imp-estado"></p>`;
   const barra = $('.progreso > div', zona), estado = $('#imp-estado');
   let nuevos = 0, actualizados = 0;
@@ -831,16 +849,11 @@ async function importarWord(archivos) {
     const f = archivos[i];
     estado.textContent = `Leyendo ${i + 1} de ${archivos.length}: ${f.name}`;
     barra.style.width = ((i + 1) / archivos.length * 100) + '%';
-    if (/\.doc$/i.test(f.name)) { errores.push(f.name + ': formato .doc antiguo (guardalo como .docx)'); continue; }
     if (/^~\$/.test(f.name)) continue; // archivos temporales de Word
+    if (!/\.docx?$/i.test(f.name)) { errores.push(f.name + ': no es un archivo de Word'); continue; }
     try {
-      const buf = await f.arrayBuffer();
-      const opciones = { convertImage: mammoth.images.imgElement(() => ({ src: '' })) };
-      const [{ value: html }, { value: texto }] = await Promise.all([
-        mammoth.convertToHtml({ arrayBuffer: buf }, opciones),
-        mammoth.extractRawText({ arrayBuffer: buf }),
-      ]);
-      const numero = f.name.replace(/\.docx$/i, '').trim();
+      const { html, texto } = await leerWord(f);
+      const numero = f.name.replace(/\.docx?$/i, '').trim();
       const datos = extraerDatos(texto);
       const importado = { archivo: f.name, fecha: new Date().toISOString() };
       const existente = porNumero.get(numero);
@@ -859,7 +872,7 @@ async function importarWord(archivos) {
       }
     } catch (e) {
       console.error(e);
-      errores.push(f.name + ': no se pudo leer (' + e.message + ')');
+      errores.push(f.name + ': no se pudo leer (¿archivo dañado o protegido con contraseña?)');
     }
     if (i % 10 === 9) await new Promise(r => setTimeout(r));
   }
