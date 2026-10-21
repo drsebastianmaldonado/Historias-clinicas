@@ -189,10 +189,10 @@ const Almacen = {
 const S = { clave: null, salt: null, iter: ITERACIONES, db: null, rev: null, soloLectura: false, pendiente: false };
 let colaGuardado = Promise.resolve();
 
-function estadoGuardado(texto, error) {
+function estadoGuardado(texto, tipo = 'ok') {
   const el = $('#estado-guardado');
   el.textContent = texto;
-  el.classList.toggle('error', !!error);
+  el.className = 'estado ' + (texto ? tipo : '');
 }
 function aviso(html) {
   const el = $('#aviso');
@@ -204,7 +204,7 @@ function guardar() {
   if (S.soloLectura) { alert('Estás viendo una copia sin conexión: no se puede guardar.'); return Promise.resolve(); }
   S.db.modificado = new Date().toISOString();
   S.pendiente = true;
-  estadoGuardado('Guardando…');
+  estadoGuardado('Guardando…', 'guardando');
   colaGuardado = colaGuardado.then(async () => {
     try {
       await Almacen.escribir(await cifrar(S.db));
@@ -213,10 +213,10 @@ function guardar() {
     } catch (e) {
       console.error(e);
       if (e instanceof ConflictoError) {
-        estadoGuardado('No guardado', true);
+        estadoGuardado('No guardado', 'error');
         aviso('Los datos se modificaron desde otro dispositivo. <b>Recargá la página</b> para ver la versión más nueva (el último cambio que hiciste acá no se guardó).');
       } else {
-        estadoGuardado('Error al guardar', true);
+        estadoGuardado('Error al guardar', 'error');
         aviso('No se pudo guardar: ' + esc(e.message) + ' — revisá la conexión a internet y volvé a intentar con «Guardar de nuevo». <button class="btn chico" data-accion="reintentar">Guardar de nuevo</button>');
       }
     }
@@ -244,6 +244,31 @@ function edad(fn, ref = new Date()) {
   }
   return a < 18 && m ? `${a} a ${m} m` : `${a} a`;
 }
+// «6 a 9 m» → «6 años 9 meses»
+function edadLarga(fn) {
+  return edad(fn).replace(/(\d+) ([amd])\b/g, (_, n, u) => n + ' ' + ({ a: ['año', 'años'], m: ['mes', 'meses'], d: ['día', 'días'] }[u][n === '1' ? 0 : 1]));
+}
+
+// ---------- Presentación ----------
+// Los archivos se llaman «02 Alvarez Irsolina.doc»: en pantalla se muestra solo el número.
+const numeroCorto = p => (String(p.numero || '').match(/^\d+(?=\s|$)/) || [p.numero || ''])[0];
+function iniciales(p) {
+  const partes = [p.apellido, p.nombre].filter(Boolean).join(' ').split(/[\s,]+/).filter(w => /^\p{L}/u.test(w));
+  return partes.slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+}
+const tonoDe = p => [...String(p.id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+const avatar = (p, clase = '') => `<span class="avatar ${clase}" style="--h:${tonoDe(p)}" aria-hidden="true">${esc(iniciales(p))}</span>`;
+const svg = d => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICONO = {
+  mas: svg('<path d="M12 5v14M5 12h14"/>'),
+  editar: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  imprimir: svg('<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/>'),
+  atras: svg('<path d="m15 18-6-6 6-6"/>'),
+  alerta: svg('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>'),
+  buscar: svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
+  documento: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>'),
+};
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 // ---------- Modelo ----------
 const CAMPOS_PACIENTE = [
@@ -290,6 +315,7 @@ function pantallaInicio(error) {
   const tieneKey = !!DBX.appKey();
   $('#app').innerHTML = `
   <div class="centro tarjeta">
+    <img src="icono.svg" alt="" class="logo" width="56" height="56">
     <h1>Historias Clínicas</h1>
     <p class="suave">Configuración inicial de este dispositivo.</p>
     ${error ? `<p class="error-texto">${esc(error)}</p>` : ''}
@@ -330,6 +356,7 @@ async function pantallaClave() {
   const nueva = !archivo.texto;
   $('#app').innerHTML = `
   <form class="centro tarjeta" id="f-clave" autocomplete="off">
+    <img src="icono.svg" alt="" class="logo" width="56" height="56">
     <h1>${nueva ? 'Crear contraseña' : 'Ingresar'}</h1>
     <p class="suave chico">${nueva
       ? 'Elegí una contraseña larga (por ejemplo, una frase). <b>Anotala en un lugar seguro:</b> sin ella no hay forma de recuperar las historias, ni siquiera desde el backup.'
@@ -375,7 +402,7 @@ function entrar() {
   $('#barra').hidden = false;
   if (S.soloLectura) aviso('Sin conexión: estás viendo la última copia guardada en este dispositivo. No se pueden hacer cambios.');
   else if (Almacen.modo() === 'local') aviso('Modo prueba: los datos están solo en este navegador y <b>no tienen backup</b>. No cargues pacientes reales.');
-  estadoGuardado(S.db.modificado ? 'Última modificación: ' + new Date(S.db.modificado).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+  estadoGuardado(S.db.modificado ? 'Guardado ' + new Date(S.db.modificado).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
   iniciarBloqueo();
   window.addEventListener('hashchange', mostrar);
   mostrar();
@@ -383,7 +410,7 @@ function entrar() {
 
 function bloquear() {
   if (S.pendiente) {
-    estadoGuardado('Guardando antes de bloquear…');
+    estadoGuardado('Guardando antes de bloquear…', 'guardando');
     colaGuardado.then(() => { if (!S.pendiente || confirm('Hay cambios sin guardar. ¿Bloquear igual?')) location.replace(location.pathname); });
     return;
   }
@@ -415,13 +442,13 @@ function vistaLista() {
   const ro = S.soloLectura;
   $('#app').innerHTML = `
   <div class="buscador">
-    <input type="search" id="q" placeholder="Buscar por apellido, nombre, N°, DNI, obra social o diagnóstico…" value="${esc(busqueda)}" autocomplete="off">
+    <label class="caja-busqueda">${ICONO.buscar}<input type="search" id="q" placeholder="Buscar paciente, N° o diagnóstico…" value="${esc(busqueda)}" autocomplete="off" aria-label="Buscar"></label>
     <select id="orden" aria-label="Ordenar">
       <option value="apellido">Por apellido</option>
       <option value="numero">Por N° de historia</option>
       <option value="reciente">Consulta más reciente</option>
     </select>
-    ${ro ? '' : `<button class="btn primario" data-accion="nuevo-paciente">+ Paciente nuevo</button>`}
+    ${ro ? '' : `<button class="btn primario" data-accion="nuevo-paciente" title="Paciente nuevo" aria-label="Paciente nuevo">${ICONO.mas}<span>Paciente nuevo</span></button>`}
   </div>
   <div id="resultados"></div>`;
   $('#orden').value = orden;
@@ -449,12 +476,11 @@ function textoCompleto(p) {
 
 function filaPaciente(p) {
   const ult = ultimaFecha(p);
-  const det = [p.fechaNac ? edad(p.fechaNac) : '', p.obraSocial, p.dni ? 'DNI ' + p.dni : ''].filter(Boolean).join(' · ');
+  const det = [p.numero ? 'N° ' + numeroCorto(p) : '', p.fechaNac ? edadLarga(p.fechaNac) : '', p.obraSocial].filter(Boolean).join(' · ');
   return `<li><a href="#/p/${encodeURIComponent(p.id)}">
-    <span class="num">${esc(p.numero || '—')}</span>
-    <span class="nom">${esc(nombreCompleto(p))}</span>
-    <span class="fec">${ult ? 'Últ. consulta ' + fechaLeg(ult) : ''}</span>
-    ${det ? `<span class="det">${esc(det)}</span>` : ''}
+    ${avatar(p)}
+    <span class="fila-info"><span class="nom">${esc(nombreCompleto(p))}</span>${det ? `<span class="det">${esc(det)}</span>` : ''}</span>
+    ${ult ? `<span class="fec"><span>Últ. consulta</span>${fechaLeg(ult)}</span>` : ''}
   </a></li>`;
 }
 
@@ -499,81 +525,101 @@ function vistaPaciente(id) {
   if (!p) { location.hash = '#/'; return; }
   document.title = nombreCompleto(p) + ' — Historias Clínicas';
   const ro = S.soloLectura;
+  const qid = esc(id);
   const dato = (t, v) => v ? `<div><dt>${t}</dt><dd>${esc(v)}</dd></div>` : '';
-  const texto = (t, v) => `<div class="tarjeta"><h2>${t}</h2>${v ? `<div class="pre">${esc(v)}</div>` : '<p class="vacio">Sin datos.</p>'}</div>`;
+  const chip = v => v ? `<span class="chip">${esc(v)}</span>` : '';
   const evol = [...(p.evoluciones || [])].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   const filtro = filtroEstudio[id] || '';
   const todosEst = [...(p.estudios || [])].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   const tiposPresentes = TIPOS_ESTUDIO.filter(t => todosEst.some(e => e.tipo === t));
   const est = filtro ? todosEst.filter(e => e.tipo === filtro) : todosEst;
+  const botonAgregar = (accion, texto) => ro ? '' : `<button class="btn primario chico" data-accion="${accion}" data-id="${qid}">${ICONO.mas}<span>${texto}</span></button>`;
+  const botonEditar = (accion, reg) => ro ? '' : `<button class="btn-icono no-imprimir" data-accion="${accion}" data-id="${qid}" data-reg="${esc(reg)}" title="Editar" aria-label="Editar">${ICONO.editar}</button>`;
+  const fechaBloque = f => {
+    const [a, m, d] = (f || '').split('-');
+    return a ? `<div class="evol-fecha"><span class="dia">${+d}</span><span class="mes">${MESES[+m - 1] || ''}</span><span class="anio">${a}</span></div>` : '<div class="evol-fecha"></div>';
+  };
+  const resumen = [['Medicación actual', p.medicacion], ['Antecedentes personales', p.antPersonales], ['Antecedentes familiares', p.antFamiliares]];
 
   $('#app').innerHTML = `
-  <p class="no-imprimir"><a href="#/">← Volver a la lista</a></p>
-  <div class="tarjeta">
-    <div class="ficha-cab">
-      <div>
+  <a class="volver no-imprimir" href="#/">${ICONO.atras}Pacientes</a>
+  <section class="tarjeta ficha-cab">
+    <div class="ficha-titulo">
+      ${avatar(p, 'grande')}
+      <div class="ficha-id">
         <h1>${esc(nombreCompleto(p))}</h1>
-        <div class="suave">${p.numero ? 'Historia N° ' + esc(p.numero) : ''}${p.fechaNac ? ' · ' + esc(edad(p.fechaNac)) + ' (nac. ' + fechaLeg(p.fechaNac) + ')' : ''}</div>
+        <div class="chips">
+          ${p.numero ? chip('N° ' + numeroCorto(p)) : ''}
+          ${p.fechaNac ? chip(edadLarga(p.fechaNac)) + chip('Nac. ' + fechaLeg(p.fechaNac)) : ''}
+          ${chip([p.obraSocial, p.nroAfiliado].filter(Boolean).join(' · '))}
+        </div>
       </div>
       <div class="acciones no-imprimir">
-        ${ro ? '' : `<button class="btn chico" data-accion="editar-paciente" data-id="${esc(id)}">Editar datos</button>`}
-        <button class="btn chico" data-accion="imprimir">Imprimir / PDF</button>
+        ${ro ? '' : `<button class="btn chico" data-accion="editar-paciente" data-id="${qid}">${ICONO.editar}<span>Editar datos</span></button>`}
+        <button class="btn chico" data-accion="imprimir">${ICONO.imprimir}<span>Imprimir</span></button>
       </div>
     </div>
-    <dl class="datos">
-      ${dato('Sexo', p.sexo)}${dato('DNI', p.dni)}${dato('Obra social', p.obraSocial)}${dato('N° de afiliado', p.nroAfiliado)}
-      ${dato('Teléfono', p.telefono)}${dato('Madre / padre / tutor', p.responsable)}${dato('Email', p.email)}
-    </dl>
-    ${p.alergias ? `<div class="alergia">Alergias: ${esc(p.alergias)}</div>` : ''}
+    ${p.sexo || p.dni || p.telefono || p.responsable || p.email ? `<dl class="datos">
+      ${dato('Sexo', p.sexo)}${dato('DNI', p.dni)}${dato('Teléfono', p.telefono)}${dato('Madre / padre / tutor', p.responsable)}${dato('Email', p.email)}
+    </dl>` : ''}
+    ${p.alergias ? `<div class="alergia">${ICONO.alerta}<div><b>Alergias</b> ${esc(p.alergias)}</div></div>` : ''}
+  </section>
+
+  <div class="ficha-cuerpo">
+    <div class="col-principal">
+      <section class="tarjeta seccion-evol">
+        <div class="cabecera-seccion"><h2>Evoluciones <span class="cuenta">${evol.length || ''}</span></h2>${botonAgregar('nueva-evolucion', 'Evolución')}</div>
+        ${evol.length ? `<div class="linea-tiempo">${evol.map(e => `
+          <article class="evol">
+            ${fechaBloque(e.fecha)}
+            <div class="evol-cuerpo">
+              <header>
+                <h3>${esc(e.motivo || 'Consulta')}</h3>
+                ${e.importada ? '<span class="etiqueta" title="Consulta traída de la historia en Word">Word</span>' : ''}
+                ${botonEditar('editar-evolucion', e.id)}
+              </header>
+              ${e.peso || e.talla ? `<p class="medidas">${esc([e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '))}</p>` : ''}
+              ${e.texto ? `<p class="pre">${esc(e.texto)}</p>` : ''}
+              ${e.diagnostico || e.conducta ? `<dl class="evol-campos">
+                ${e.diagnostico ? `<div><dt>Diagnóstico</dt><dd>${esc(e.diagnostico)}</dd></div>` : ''}
+                ${e.conducta ? `<div><dt>Conducta</dt><dd>${esc(e.conducta)}</dd></div>` : ''}
+              </dl>` : ''}
+            </div>
+          </article>`).join('')}</div>` : '<p class="vacio">Sin evoluciones cargadas.</p>'}
+      </section>
+
+      ${p.historiaImportada ? `
+      <section class="tarjeta seccion-historia">
+        <details ${p.evoluciones?.length ? '' : 'open'}>
+          <summary>${ICONO.documento}<span>Historia original completa${p.importado?.archivo ? `<small>${esc(p.importado.archivo)}</small>` : ''}</span></summary>
+          <div class="importada">${limpiarHTML(p.historiaImportada)}</div>
+        </details>
+      </section>` : ''}
+    </div>
+
+    <aside class="col-lateral">
+      <section class="tarjeta seccion-resumen">
+        <h2>Resumen clínico</h2>
+        <dl class="resumen">${resumen.map(([t, v]) => `<div><dt>${t}</dt><dd class="${v ? 'pre' : 'vacio'}">${v ? esc(v) : 'Sin datos'}</dd></div>`).join('')}</dl>
+      </section>
+
+      <section class="tarjeta seccion-estudios">
+        <div class="cabecera-seccion"><h2>Estudios <span class="cuenta">${todosEst.length || ''}</span></h2>${botonAgregar('nuevo-estudio', 'Estudio')}</div>
+        ${tiposPresentes.length > 1 ? `<div class="filtros">
+          <button data-accion="filtro-estudio" data-id="${qid}" data-tipo="" class="${filtro ? '' : 'activo'}">Todos</button>
+          ${tiposPresentes.map(t => `<button data-accion="filtro-estudio" data-id="${qid}" data-tipo="${esc(t)}" class="${filtro === t ? 'activo' : ''}">${esc(t)}</button>`).join('')}
+        </div>` : ''}
+        ${est.length ? est.map(e => `
+          <article class="estudio">
+            <header><span class="etiqueta tipo" style="--h:${(TIPOS_ESTUDIO.indexOf(e.tipo) * 47 + 200) % 360}">${esc(e.tipo === 'Otro' && e.detalle ? e.detalle : e.tipo)}</span>
+              <span class="suave">${fechaLeg(e.fecha)}</span>${botonEditar('editar-estudio', e.id)}</header>
+            ${e.resultado ? `<p class="pre">${esc(e.resultado)}</p>` : ''}
+          </article>`).join('') : '<p class="vacio">Sin estudios cargados.</p>'}
+      </section>
+    </aside>
   </div>
 
-  <div class="bloques">
-    ${texto('Medicación actual', p.medicacion)}
-    ${texto('Antecedentes personales', p.antPersonales)}
-    ${texto('Antecedentes familiares', p.antFamiliares)}
-  </div>
-
-  <div class="tarjeta">
-    <div class="cabecera-seccion"><h2>Evoluciones</h2>
-      ${ro ? '' : `<button class="btn primario chico" data-accion="nueva-evolucion" data-id="${esc(id)}">+ Evolución</button>`}</div>
-    ${evol.length ? evol.map(e => `
-      <div class="registro">
-        <div class="registro-cab"><h3>${fechaLeg(e.fecha)}${e.motivo ? ' — ' + esc(e.motivo) : ''}${e.importada ? ' <span class="etiqueta" title="Consulta traída de la historia en Word">Word</span>' : ''}</h3>
-          ${ro ? '' : `<button class="btn chico no-imprimir" data-accion="editar-evolucion" data-id="${esc(id)}" data-reg="${esc(e.id)}">Editar</button>`}</div>
-        <dl>
-          ${e.peso || e.talla ? `<dt>Peso / talla</dt><dd>${esc([e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '))}</dd>` : ''}
-          ${e.texto ? `<dt>Evolución</dt><dd>${esc(e.texto)}</dd>` : ''}
-          ${e.diagnostico ? `<dt>Diagnóstico</dt><dd>${esc(e.diagnostico)}</dd>` : ''}
-          ${e.conducta ? `<dt>Conducta</dt><dd>${esc(e.conducta)}</dd>` : ''}
-        </dl>
-      </div>`).join('') : '<p class="vacio">Sin evoluciones cargadas.</p>'}
-  </div>
-
-  <div class="tarjeta">
-    <div class="cabecera-seccion"><h2>Estudios complementarios</h2>
-      ${ro ? '' : `<button class="btn primario chico" data-accion="nuevo-estudio" data-id="${esc(id)}">+ Estudio</button>`}</div>
-    ${tiposPresentes.length > 1 ? `<div class="filtros">
-      <button data-accion="filtro-estudio" data-id="${esc(id)}" data-tipo="" class="${filtro ? '' : 'activo'}">Todos</button>
-      ${tiposPresentes.map(t => `<button data-accion="filtro-estudio" data-id="${esc(id)}" data-tipo="${esc(t)}" class="${filtro === t ? 'activo' : ''}">${esc(t)}</button>`).join('')}
-    </div>` : ''}
-    ${est.length ? est.map(e => `
-      <div class="registro">
-        <div class="registro-cab"><div><span class="etiqueta">${esc(e.tipo === 'Otro' && e.detalle ? e.detalle : e.tipo)}</span> <span class="suave">${fechaLeg(e.fecha)}</span></div>
-          ${ro ? '' : `<button class="btn chico no-imprimir" data-accion="editar-estudio" data-id="${esc(id)}" data-reg="${esc(e.id)}">Editar</button>`}</div>
-        ${e.resultado ? `<div class="pre" style="margin-top:6px">${esc(e.resultado)}</div>` : ''}
-      </div>`).join('') : '<p class="vacio">Sin estudios cargados.</p>'}
-  </div>
-
-  ${p.historiaImportada ? `
-  <div class="tarjeta">
-    <details ${p.evoluciones?.length ? '' : 'open'}>
-      <summary>Historia original completa (Word${p.importado?.archivo ? ': ' + esc(p.importado.archivo) : ''})</summary>
-      <div class="importada" style="margin-top:10px">${limpiarHTML(p.historiaImportada)}</div>
-    </details>
-  </div>` : ''}
-
-  ${ro ? '' : `<p class="no-imprimir chico suave" style="text-align:right">
-    <button class="btn chico peligro" data-accion="borrar-paciente" data-id="${esc(id)}">Eliminar paciente</button></p>`}`;
+  ${ro ? '' : `<p class="pie-ficha no-imprimir"><button class="btn chico peligro" data-accion="borrar-paciente" data-id="${qid}">Eliminar paciente</button></p>`}`;
   scrollTo(0, 0);
 }
 
@@ -675,7 +721,7 @@ function vistaAjustes() {
   const local = Almacen.modo() === 'local';
   const ro = S.soloLectura;
   $('#app').innerHTML = `
-  <p><a href="#/">← Volver a la lista</a></p>
+  <a class="volver" href="#/">${ICONO.atras}Pacientes</a>
   <div class="tarjeta">
     <h2>Datos y copias de seguridad</h2>
     ${local
@@ -722,7 +768,7 @@ function vistaAjustes() {
 
   <div class="tarjeta">
     <h2>Resumen</h2>
-    <p>${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones ·
+    <p id="resumen-datos">${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones ·
       ${S.db.pacientes.reduce((n, p) => n + (p.estudios?.length || 0), 0)} estudios</p>
   </div>`;
   document.querySelectorAll('input[data-destino]').forEach(inp => inp.addEventListener('change', e => {
@@ -1082,6 +1128,8 @@ async function importarWord(archivos) {
   }
   estado.textContent = 'Guardando…';
   if (nuevos || actualizados) await guardar();
+  const datos = $('#resumen-datos');
+  if (datos) datos.textContent = `${S.db.pacientes.length} pacientes · ${S.db.pacientes.reduce((n, p) => n + (p.evoluciones?.length || 0), 0)} evoluciones · ${S.db.pacientes.reduce((n, p) => n + (p.estudios?.length || 0), 0)} estudios`;
   zona.innerHTML = resumen + `<p><b>Listo.</b> ${nuevos} pacientes nuevos, ${actualizados} actualizados, ${evoluciones} consultas separadas${errores.length ? `, ${errores.length} con problemas` : ''}.</p>
     ${errores.length ? `<details><summary>Ver archivos con problemas</summary><ul class="chico">${errores.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}
     ${S.pendiente ? '<p class="error-texto">Ojo: no se pudo guardar en Dropbox. Revisá el aviso de arriba.</p>' : ''}
