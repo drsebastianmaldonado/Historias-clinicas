@@ -729,6 +729,7 @@ function vistaPaciente(id) {
 
 // ---------- Formularios ----------
 function campoHTML(c, v) {
+  if (c.tipo === 'html') return c.html;
   const val = esc(v ?? '');
   const req = c.req ? ' required' : '';
   let input;
@@ -759,7 +760,7 @@ function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBo
   form.onsubmit = async ev => {
     ev.preventDefault();
     const datos = {};
-    for (const c of campos) datos[c.k] = c.tipo === 'archivos' ? [...form.elements[c.k].files] : (form.elements[c.k].value || '').trim();
+    for (const c of campos.filter(c => c.tipo !== 'html')) datos[c.k] = c.tipo === 'archivos' ? [...form.elements[c.k].files] : (form.elements[c.k].value || '').trim();
     const err = $('#dlg-err'), botones = form.querySelectorAll('.pie-dialogo button');
     botones.forEach(b => { b.disabled = true; });
     err.classList.add('progreso-texto');
@@ -1079,25 +1080,61 @@ function dibujarFirma() {
 
 // ---------- Resumen de historia clínica ----------
 const OPCIONES_EVOLUCIONES = { 'Las últimas 3': 3, 'La última': 1, 'Las últimas 5': 5, 'Las últimas 10': 10, 'Todas': Infinity, 'Ninguna': 0 };
+// Texto de una evolución para pegar en el resumen.
+function textoEvolucion(e) {
+  const medidas = [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · ');
+  return [`${fechaLeg(e.fecha)}${e.motivo ? ' — ' + e.motivo : ''}`, medidas && 'Peso / talla: ' + medidas, e.texto,
+    e.diagnostico && 'Diagnóstico: ' + e.diagnostico, e.conducta && 'Conducta: ' + e.conducta].filter(Boolean).join('\n');
+}
+
 function dialogoResumen(p) {
-  const evol = p.evoluciones || [];
+  const evol = [...(p.evoluciones || [])].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const insertar = evol.length ? `<div class="campo ancho insertar-evol">
+      <span>Agregar una evolución al texto</span>
+      <div class="fila-insertar">
+        <select id="evol-insertar" aria-label="Evolución para agregar">${evol.map(e =>
+          `<option value="${esc(e.id)}">${fechaLeg(e.fecha)}${e.motivo ? ' — ' + esc(e.motivo.slice(0, 60)) : ''}</option>`).join('')}</select>
+        <button type="button" class="btn" id="boton-insertar">${ICONO.mas}<span>Agregar</span></button>
+      </div>
+      <small class="ayuda">Se agrega donde está el cursor y después la podés corregir como quieras.</small>
+    </div>` : '';
   formulario({
     titulo: 'Resumen de historia clínica — ' + nombreCompleto(p),
     intro: `<p class="chico suave" style="margin:-8px 0 16px">Incluye datos del paciente, alergias, antecedentes, medicación y diagnósticos.
-      Elegí qué más agregar. Al final queda el lugar para firma y sello.</p>`,
+      El texto del resumen se guarda como borrador en la ficha. Al final queda el lugar para firma y sello.</p>`,
     campos: [
       { k: 'destinatario', t: 'Dirigido a (opcional)', ancho: true },
-      { k: 'comentario', t: 'Resumen / comentario (opcional)', tipo: 'area' },
-      { k: 'evoluciones', t: `Evoluciones (tiene ${evol.length})`, tipo: 'select', ops: Object.keys(OPCIONES_EVOLUCIONES) },
+      { k: 'comentario', t: 'Texto del resumen', tipo: 'area' },
+      { tipo: 'html', html: insertar },
+      { k: 'evoluciones', t: `Además, evoluciones completas al final (tiene ${evol.length})`, tipo: 'select', ops: Object.keys(OPCIONES_EVOLUCIONES) },
       { k: 'estudios', t: `Estudios (tiene ${(p.estudios || []).length})`, tipo: 'select', ops: ['Todos', 'Ninguno'] },
     ],
-    valores: { evoluciones: 'Las últimas 3', estudios: 'Todos' },
+    valores: { destinatario: p.borradorResumen?.destinatario, comentario: p.borradorResumen?.texto, evoluciones: 'Ninguna', estudios: 'Todos' },
     textoGuardar: 'Descargar PDF',
     async onGuardar(d, aviso) {
       aviso('Generando el PDF…');
       await pdfResumen(p, d);
     },
   });
+  const form = $('#dlg-form'), area = form.elements.comentario;
+  area.classList.add('texto-resumen');
+  $('#boton-insertar')?.addEventListener('click', () => {
+    const e = evol.find(x => x.id === $('#evol-insertar').value);
+    if (!e) return;
+    const antes = area.value.slice(0, area.selectionStart);
+    const separador = !antes ? '' : antes.endsWith('\n\n') ? '' : antes.endsWith('\n') ? '\n' : '\n\n';
+    area.setRangeText(separador + textoEvolucion(e) + '\n\n', area.selectionStart, area.selectionEnd, 'end');
+    area.focus();
+  });
+  // Al cerrar (descargando o cancelando) se guarda el borrador si cambió.
+  $('#dlg').addEventListener('close', () => {
+    if (S.soloLectura) return;
+    const borrador = { destinatario: form.elements.destinatario.value.trim(), texto: area.value.trim() };
+    const anterior = p.borradorResumen || { destinatario: '', texto: '' };
+    if (borrador.texto === anterior.texto && borrador.destinatario === anterior.destinatario) return;
+    if (borrador.texto || borrador.destinatario) p.borradorResumen = borrador; else delete p.borradorResumen;
+    guardar();
+  }, { once: true });
 }
 
 async function pdfResumen(p, opciones) {
@@ -1110,7 +1147,17 @@ async function pdfResumen(p, opciones) {
     pdf.parrafo(`En seguimiento desde el ${fechaLeg(evol[0].fecha)} · ${evol.length} consulta${evol.length === 1 ? '' : 's'} · última el ${fechaLeg(evol[evol.length - 1].fecha)}`,
       { tam: 9.5, color: pdf.GRIS });
   }
-  pdf.seccion('Resumen', opciones.comentario);
+  // Texto del resumen: los renglones que empiezan con una fecha (evoluciones agregadas) van en negrita.
+  if (opciones.comentario) {
+    pdf.espacio(14); pdf.y += 3;
+    pdf.rotulo('Resumen'); pdf.y += 0.5;
+    for (const linea of opciones.comentario.split('\n')) {
+      if (!linea.trim()) { pdf.y += 2.5; continue; }
+      const esFecha = /^\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(linea.trim());
+      if (esFecha) pdf.espacio(12);
+      pdf.parrafo(linea, esFecha ? { estilo: 'bold' } : {});
+    }
+  }
   pdf.seccion('Antecedentes personales', p.antPersonales);
   pdf.seccion('Antecedentes familiares', p.antFamiliares);
   pdf.seccion('Medicación actual', p.medicacion);
