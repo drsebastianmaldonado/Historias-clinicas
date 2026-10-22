@@ -526,16 +526,59 @@ function mostrar() {
   let m;
   if ((m = h.match(/^#\/p\/(.+)$/))) return vistaPaciente(decodeURIComponent(m[1]));
   if (h === '#/ajustes') return vistaAjustes();
-  vistaLista();
+  if (h === '#/todos') return vistaLista();
+  vistaInicio();
 }
 
 // ---------- Lista de pacientes ----------
 let busqueda = '', orden = pref.get('orden') || 'apellido';
 
-function vistaLista() {
+// Pacientes abiertos últimamente en este dispositivo (solo los identificadores, que no dicen nada del paciente).
+const recientes = {
+  leer() { try { return JSON.parse(pref.get('recientes') || '[]'); } catch { return []; } },
+  agregar(id) { pref.set('recientes', JSON.stringify([id, ...recientes.leer().filter(x => x !== id)].slice(0, 8))); },
+};
+
+// Inicio: saludo, buscador y los últimos pacientes abiertos. La lista completa está en «Todos los pacientes».
+function vistaInicio() {
   document.title = 'Historias Clínicas';
   const ro = S.soloLectura;
+  const hora = new Date().getHours();
+  const saludo = hora < 6 ? 'Buenas noches' : hora < 13 ? 'Buen día' : hora < 20 ? 'Buenas tardes' : 'Buenas noches';
+  const hoy = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
   $('#app').innerHTML = `
+  <div class="inicio">
+    <h1 class="saludo">${saludo}</h1>
+    <p class="fecha-hoy">${esc(hoy)}</p>
+    <label class="caja-busqueda grande">${ICONO.buscar}<input type="search" id="q" placeholder="Buscar paciente, N° o diagnóstico…" value="${esc(busqueda)}" autocomplete="off" aria-label="Buscar"></label>
+    <div class="acciones-inicio">
+      ${ro ? '' : `<button class="btn primario" data-accion="nuevo-paciente">${ICONO.mas}<span>Paciente nuevo</span></button>`}
+      <a class="btn" href="#/todos">Todos<span class="solo-pc">&nbsp;los pacientes</span> <span class="cuenta">${S.db.pacientes.length}</span></a>
+    </div>
+    <div id="resultados"></div>
+  </div>`;
+  let t;
+  $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { busqueda = e.target.value; dibujarInicio(); }, 120); });
+  dibujarInicio();
+  if (matchMedia('(min-width: 601px)').matches) $('#q').focus();
+}
+function dibujarInicio() {
+  if (normalizar(busqueda).trim()) return dibujarResultados();
+  const el = $('#resultados');
+  if (!S.db.pacientes.length) return dibujarResultados(); // muestra cómo empezar
+  const vistos = recientes.leer().map(paciente).filter(Boolean).slice(0, 6);
+  const lista = vistos.length ? vistos
+    : [...S.db.pacientes].filter(p => ultimaFecha(p)).sort((a, b) => ultimaFecha(b).localeCompare(ultimaFecha(a))).slice(0, 6);
+  el.innerHTML = lista.length ? `
+    <p class="subtitulo-lista">${vistos.length ? 'Vistos recientemente' : 'Últimas consultas'}</p>
+    <ul class="lista">${lista.map(filaPaciente).join('')}</ul>` : '';
+}
+
+function vistaLista() {
+  document.title = 'Todos los pacientes — Historias Clínicas';
+  const ro = S.soloLectura;
+  $('#app').innerHTML = `
+  <a class="volver" href="#/">${ICONO.atras}Inicio</a>
   <div class="buscador">
     <label class="caja-busqueda">${ICONO.buscar}<input type="search" id="q" placeholder="Buscar paciente, N° o diagnóstico…" value="${esc(busqueda)}" autocomplete="off" aria-label="Buscar"></label>
     <select id="orden" aria-label="Ordenar">
@@ -620,6 +663,7 @@ function vistaPaciente(id) {
   const p = paciente(id);
   if (!p) { location.hash = '#/'; return; }
   document.title = nombreCompleto(p) + ' — Historias Clínicas';
+  recientes.agregar(id);
   const ro = S.soloLectura;
   const qid = esc(id);
   const dato = (t, v) => v ? `<div><dt>${t}</dt><dd>${esc(v)}</dd></div>` : '';
