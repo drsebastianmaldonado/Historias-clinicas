@@ -701,8 +701,10 @@ function vistaPaciente(id) {
         <dl class="resumen">${resumen.map(([t, v]) => `<div><dt>${t}</dt><dd class="${v ? 'pre' : 'vacio'}">${v ? esc(v) : 'Sin datos'}</dd></div>`).join('')}</dl>
       </section>
 
+      ${todosEst.length ? `
+      <!-- Los estudios ahora se cargan dentro de cada evolución; este recuadro solo aparece si quedaron estudios cargados aparte. -->
       <section class="tarjeta seccion-estudios">
-        <div class="cabecera-seccion"><h2>Estudios <span class="cuenta">${todosEst.length || ''}</span></h2>${botonAgregar('nuevo-estudio', 'Estudio')}</div>
+        <div class="cabecera-seccion"><h2>Estudios <span class="cuenta">${todosEst.length}</span></h2></div>
         ${tiposPresentes.length > 1 ? `<div class="filtros">
           <button data-accion="filtro-estudio" data-id="${qid}" data-tipo="" class="${filtro ? '' : 'activo'}">Todos</button>
           ${tiposPresentes.map(t => `<button data-accion="filtro-estudio" data-id="${qid}" data-tipo="${esc(t)}" class="${filtro === t ? 'activo' : ''}">${esc(t)}</button>`).join('')}
@@ -713,8 +715,8 @@ function vistaPaciente(id) {
               <span class="suave">${fechaLeg(e.fecha)}</span>${botonEditar('editar-estudio', e.id)}</header>
             ${e.resultado ? `<p class="pre">${esc(e.resultado)}</p>` : ''}
             ${adjuntos.filter(a => a.estudioId === e.id).map(a => `<button class="adjunto-mini" data-accion="ver-adjunto" data-id="${qid}" data-reg="${esc(a.id)}">${ICONO.clip}<span>${esc(a.nombre)}</span></button>`).join('')}
-          </article>`).join('') : '<p class="vacio">Sin estudios cargados.</p>'}
-      </section>
+          </article>`).join('') : ''}
+      </section>` : ''}
 
       <section class="tarjeta seccion-archivos">
         <div class="cabecera-seccion"><h2>Archivos <span class="cuenta">${adjuntos.length || ''}</span></h2>${botonAgregar('adjuntar', 'Adjuntar')}</div>
@@ -1128,7 +1130,7 @@ function dialogoResumen(p) {
       { k: 'comentario', t: 'Texto del resumen', tipo: 'area' },
       { tipo: 'html', html: insertar },
       { k: 'evoluciones', t: `Además, evoluciones completas al final (tiene ${evol.length})`, tipo: 'select', ops: Object.keys(OPCIONES_EVOLUCIONES) },
-      { k: 'estudios', t: `Estudios (tiene ${(p.estudios || []).length})`, tipo: 'select', ops: ['Todos', 'Ninguno'] },
+      ...((p.estudios || []).length ? [{ k: 'estudios', t: `Estudios cargados aparte (tiene ${p.estudios.length})`, tipo: 'select', ops: ['Todos', 'Ninguno'] }] : []),
     ],
     valores: { destinatario: p.borradorResumen?.destinatario, comentario: p.borradorResumen?.texto, evoluciones: 'Ninguna', estudios: 'Todos' },
     textoGuardar: 'Descargar PDF',
