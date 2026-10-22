@@ -374,9 +374,18 @@ const CAMPOS_EVOLUCION = [
   { k: 'motivo', t: 'Motivo de consulta' },
   { k: 'peso', t: 'Peso (kg)', tipo: 'text' },
   { k: 'talla', t: 'Talla (cm)', tipo: 'text' },
-  { k: 'texto', t: 'Evolución / examen físico', tipo: 'area', ancho: true },
+  { k: 'texto', t: 'Evolución / enfermedad actual', tipo: 'area', ancho: true },
+  { k: 'examen', t: 'Examen físico', tipo: 'area', ancho: true },
+  { k: 'estudiosComp', t: 'Estudios complementarios', tipo: 'area', ancho: true },
+  { k: 'medicacion', t: 'Medicación actual', tipo: 'area', ancho: true },
+  { k: 'actualizarMed', t: 'Pasar esta medicación al «Resumen clínico» del paciente', tipo: 'casilla' },
   { k: 'diagnostico', t: 'Diagnóstico', ancho: true },
   { k: 'conducta', t: 'Conducta', tipo: 'area', ancho: true },
+];
+// Apartados de una evolución, en el orden en que se muestran (pantalla, PDF y resumen).
+const APARTADOS_EVOLUCION = [
+  ['examen', 'Examen físico'], ['estudiosComp', 'Estudios complementarios'], ['medicacion', 'Medicación actual'],
+  ['diagnostico', 'Diagnóstico'], ['conducta', 'Conducta'],
 ];
 const CAMPOS_ESTUDIO = [
   { k: 'tipo', t: 'Estudio', tipo: 'select', ops: TIPOS_ESTUDIO, req: true },
@@ -556,7 +565,7 @@ function textoCompleto(p) {
     textoImportado.set(p, normalizar(d.body.textContent));
   }
   return normalizar([p.alergias, p.medicacion, p.antPersonales, p.antFamiliares,
-    ...(p.evoluciones || []).flatMap(e => [e.motivo, e.texto, e.conducta]),
+    ...(p.evoluciones || []).flatMap(e => [e.motivo, e.texto, e.examen, e.estudiosComp, e.medicacion, e.conducta]),
     ...(p.estudios || []).flatMap(e => [e.tipo, e.detalle, e.resultado]),
     ...(p.adjuntos || []).flatMap(a => [a.categoria, a.descripcion, a.nombre])].join(' ')) + ' ' + (textoImportado.get(p) || '');
 }
@@ -670,9 +679,8 @@ function vistaPaciente(id) {
               </header>
               ${e.peso || e.talla ? `<p class="medidas">${esc([e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '))}</p>` : ''}
               ${e.texto ? `<p class="pre">${esc(e.texto)}</p>` : ''}
-              ${e.diagnostico || e.conducta ? `<dl class="evol-campos">
-                ${e.diagnostico ? `<div><dt>Diagnóstico</dt><dd>${esc(e.diagnostico)}</dd></div>` : ''}
-                ${e.conducta ? `<div><dt>Conducta</dt><dd>${esc(e.conducta)}</dd></div>` : ''}
+              ${APARTADOS_EVOLUCION.some(([k]) => e[k]) ? `<dl class="evol-campos">
+                ${APARTADOS_EVOLUCION.filter(([k]) => e[k]).map(([k, t]) => `<div><dt>${t}</dt><dd>${esc(e[k])}</dd></div>`).join('')}
               </dl>` : ''}
             </div>
           </article>`).join('')}</div>` : '<p class="vacio">Sin evoluciones cargadas.</p>'}
@@ -730,6 +738,7 @@ function vistaPaciente(id) {
 // ---------- Formularios ----------
 function campoHTML(c, v) {
   if (c.tipo === 'html') return c.html;
+  if (c.tipo === 'casilla') return `<label class="casilla ancho"><input type="checkbox" name="${c.k}"${v ? ' checked' : ''}><span>${c.t}</span></label>`;
   const val = esc(v ?? '');
   const req = c.req ? ' required' : '';
   let input;
@@ -760,7 +769,7 @@ function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBo
   form.onsubmit = async ev => {
     ev.preventDefault();
     const datos = {};
-    for (const c of campos.filter(c => c.tipo !== 'html')) datos[c.k] = c.tipo === 'archivos' ? [...form.elements[c.k].files] : (form.elements[c.k].value || '').trim();
+    for (const c of campos.filter(c => c.tipo !== 'html')) datos[c.k] = c.tipo === 'casilla' ? form.elements[c.k].checked : c.tipo === 'archivos' ? [...form.elements[c.k].files] : (form.elements[c.k].value || '').trim();
     const err = $('#dlg-err'), botones = form.querySelectorAll('.pie-dialogo button');
     botones.forEach(b => { b.disabled = true; });
     err.classList.add('progreso-texto');
@@ -1011,8 +1020,7 @@ async function pdfEvolucion(p, e, boton) {
     pdf.seccion('Motivo de consulta', e.motivo);
     pdf.seccion('Peso / talla', [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · '));
     pdf.seccion('Evolución', e.texto);
-    pdf.seccion('Diagnóstico', e.diagnostico);
-    pdf.seccion('Conducta', e.conducta);
+    for (const [k, t] of APARTADOS_EVOLUCION) pdf.seccion(t, e[k]);
     pdf.firma();
     await pdf.terminar(`${nombreCompleto(p)} · Evolución del ${fechaLeg(e.fecha)}`, `Evolucion ${nombreParaArchivo(p)} ${e.fecha || ''}`);
   } catch (err) {
@@ -1097,7 +1105,7 @@ const OPCIONES_EVOLUCIONES = { 'Las últimas 3': 3, 'La última': 1, 'Las últim
 function textoEvolucion(e) {
   const medidas = [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · ');
   return [`${fechaLeg(e.fecha)}${e.motivo ? ' — ' + e.motivo : ''}`, medidas && 'Peso / talla: ' + medidas, e.texto,
-    e.diagnostico && 'Diagnóstico: ' + e.diagnostico, e.conducta && 'Conducta: ' + e.conducta].filter(Boolean).join('\n');
+    ...APARTADOS_EVOLUCION.map(([k, t]) => e[k] && `${t}: ${e[k]}`)].filter(Boolean).join('\n');
 }
 
 function dialogoResumen(p) {
@@ -1202,7 +1210,7 @@ async function pdfResumen(p, opciones) {
       pdf.espacio(14); pdf.y += 3;
       pdf.parrafo(`${fechaLeg(e.fecha)}${e.motivo ? ' · ' + e.motivo : ''}`, { estilo: 'bold', tam: 10.5 });
       const medidas = [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · ');
-      for (const t of [medidas && 'Peso / talla: ' + medidas, e.texto, e.diagnostico && 'Diagnóstico: ' + e.diagnostico, e.conducta && 'Conducta: ' + e.conducta]) {
+      for (const t of [medidas && 'Peso / talla: ' + medidas, e.texto, ...APARTADOS_EVOLUCION.map(([k, t]) => e[k] && `${t}: ${e[k]}`)]) {
         if (t) pdf.parrafo(t, { tam: 10.5, interlineado: 4.9 });
       }
     }
@@ -1238,10 +1246,17 @@ function editarRegistro(id, lista, regId) {
   formulario({
     titulo: (reg ? 'Editar ' : 'Nueva ') + (esEvol ? 'evolución' : 'estudio') + ' — ' + nombreCompleto(p),
     campos: esEvol ? CAMPOS_EVOLUCION : CAMPOS_ESTUDIO,
-    valores: reg || { fecha: hoyISO(), tipo: filtroEstudio[id] || '' },
+    valores: esEvol
+      // La medicación arranca con la del resumen clínico; al guardar, si es la consulta más reciente, se puede pasar al resumen.
+      ? (reg ? Object.assign({}, reg, { actualizarMed: reg.fecha >= ultimaFecha(p) }) : { fecha: hoyISO(), medicacion: p.medicacion, actualizarMed: true })
+      : reg || { fecha: hoyISO(), tipo: filtroEstudio[id] || '' },
     async onGuardar(d, aviso) {
       const archivos = d.archivos || [];
       delete d.archivos;
+      if (esEvol) {
+        if (d.actualizarMed && d.medicacion && d.medicacion !== p.medicacion) p.medicacion = d.medicacion;
+        delete d.actualizarMed;
+      }
       const destino = reg || Object.assign({ id: nuevoId(), creado: new Date().toISOString() }, d);
       if (archivos.length) {
         const nombre = d.tipo === 'Otro' && d.detalle ? d.detalle : d.tipo;
