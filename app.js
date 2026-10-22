@@ -689,7 +689,7 @@ function vistaPaciente(id) {
 
     <aside class="col-lateral">
       <section class="tarjeta seccion-resumen">
-        <h2>Resumen clínico</h2>
+        <div class="cabecera-seccion"><h2>Resumen clínico</h2>${ro ? '' : `<button class="btn-icono no-imprimir" data-accion="editar-resumen" data-id="${qid}" title="Editar resumen clínico" aria-label="Editar resumen clínico">${ICONO.editar}</button>`}</div>
         <dl class="resumen">${resumen.map(([t, v]) => `<div><dt>${t}</dt><dd class="${v ? 'pre' : 'vacio'}">${v ? esc(v) : 'Sin datos'}</dd></div>`).join('')}</dl>
       </section>
 
@@ -793,6 +793,19 @@ function editarPaciente(id) {
     },
     onBorrar: p ? () => borrarPaciente(p) : null,
     textoBorrar: 'Eliminar paciente',
+  });
+}
+// Solo los datos clínicos del recuadro «Resumen clínico» (y las alergias), sin el resto de la ficha.
+function editarResumenClinico(id) {
+  const p = paciente(id);
+  formulario({
+    titulo: 'Resumen clínico — ' + nombreCompleto(p),
+    campos: CAMPOS_PACIENTE.filter(c => ['alergias', 'medicacion', 'antPersonales', 'antFamiliares'].includes(c.k)),
+    valores: p,
+    onGuardar(d) {
+      Object.assign(p, d, { modificado: new Date().toISOString() });
+      guardar(); mostrar();
+    },
   });
 }
 function editarAdjunto(id, adjId) {
@@ -1717,6 +1730,7 @@ document.addEventListener('click', ev => {
     case 'reintentar': aviso(''); guardar(); break;
     case 'nuevo-paciente': editarPaciente(null); break;
     case 'editar-paciente': editarPaciente(id); break;
+    case 'editar-resumen': editarResumenClinico(id); break;
     case 'nueva-evolucion': editarRegistro(id, 'evoluciones'); break;
     case 'editar-evolucion': editarRegistro(id, 'evoluciones', reg); break;
     case 'nuevo-estudio': editarRegistro(id, 'estudios'); break;
