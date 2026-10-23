@@ -402,7 +402,10 @@ const CAMPOS_ADJUNTO = [
 
 const paciente = id => S.db.pacientes.find(p => p.id === id);
 const nombreCompleto = p => [p.apellido, p.nombre].filter(Boolean).join(', ') || (p.numero ? 'Historia N° ' + p.numero : 'Sin nombre');
-const ultimaFecha = p => (p.evoluciones || []).reduce((m, e) => (e.fecha > m ? e.fecha : m), p.ultimaConsultaImportada || '');
+// Fechas imposibles (del futuro o anteriores al nacimiento): casi siempre un error de tipeo en el año del Word.
+const fechaDudosa = (p, f) => !!f && (f > hoyISO() || (!!p.fechaNac && f < p.fechaNac));
+// Última consulta, sin contar las fechas imposibles (si no, un «2031» mal tipeado queda siempre primero).
+const ultimaFecha = p => (p.evoluciones || []).reduce((m, e) => (e.fecha > m && !fechaDudosa(p, e.fecha) ? e.fecha : m), p.ultimaConsultaImportada || '');
 
 // ---------- Pantallas de ingreso ----------
 function pantallaInicio(error) {
@@ -717,6 +720,7 @@ function vistaPaciente(id) {
             <div class="evol-cuerpo">
               <header>
                 <h3>${esc(e.motivo || 'Consulta')}</h3>
+                ${fechaDudosa(p, e.fecha) ? `<span class="etiqueta aviso" title="${e.fecha > hoyISO() ? 'La fecha es posterior a hoy' : 'La fecha es anterior al nacimiento'}: revisala con el lápiz">Revisar fecha</span>` : ''}
                 ${e.importada ? '<span class="etiqueta" title="Consulta traída de la historia en Word">Word</span>' : ''}
                 <button class="btn-icono no-imprimir" data-accion="pdf-evolucion" data-id="${qid}" data-reg="${esc(e.id)}" title="PDF para compartir" aria-label="PDF para compartir">${ICONO.compartir}</button>
                 ${botonEditar('editar-evolucion', e.id)}
@@ -1356,6 +1360,19 @@ function vistaAjustes() {
     </div>
     <div id="importacion" style="margin-top:12px"></div>
   </div>
+
+  ${(() => {
+    const dudosas = S.db.pacientes.map(p => ({ p, n: (p.evoluciones || []).filter(e => fechaDudosa(p, e.fecha)).length })).filter(x => x.n)
+      .sort((a, b) => nombreCompleto(a.p).localeCompare(nombreCompleto(b.p), 'es'));
+    return `<div class="tarjeta">
+    <h2>Fechas para revisar</h2>
+    ${dudosas.length ? `<p class="chico">Hay <b>${dudosas.reduce((n, x) => n + x.n, 0)}</b> evoluciones con fecha del futuro o anterior al nacimiento, casi siempre por un error de tipeo en el año del Word.
+      No se usan para ordenar por «consulta más reciente». En cada ficha aparecen marcadas con <span class="etiqueta aviso">Revisar fecha</span>: corregilas con el lápiz de la evolución.</p>
+      <details><summary>Ver pacientes (${dudosas.length})</summary><ul class="chico">${dudosas.map(({ p, n }) =>
+        `<li><a href="#/p/${encodeURIComponent(p.id)}">${esc(numeroCorto(p))} · ${esc(nombreCompleto(p))}</a> <span class="suave">(${n})</span></li>`).join('')}</ul></details>`
+      : '<p class="chico suave" style="margin:0">No hay evoluciones con fechas imposibles.</p>'}
+  </div>`;
+  })()}
 
   <div class="tarjeta">
     <h2>Revisar importación</h2>
