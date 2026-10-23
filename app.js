@@ -346,6 +346,7 @@ const ICONO = {
   buscar: svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
   documento: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>'),
   imagen: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'),
+  siguiente: svg('<path d="m9 18 6-6-6-6"/>'),
   compartir: svg('<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4M12 2v13"/>'),
   clip: svg('<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>'),
 };
@@ -716,7 +717,7 @@ function vistaPaciente(id) {
       <section class="tarjeta seccion-evol">
         <div class="cabecera-seccion"><h2>Evoluciones <span class="cuenta">${evol.length || ''}</span></h2>${botonAgregar('nueva-evolucion', 'Evolución')}</div>
         ${evol.length ? `<div class="linea-tiempo">${evol.map(e => `
-          <article class="evol">
+          <article class="evol" data-accion="ver-evolucion" data-id="${qid}" data-reg="${esc(e.id)}" title="Tocá para verla en grande">
             ${fechaBloque(e.fecha)}
             <div class="evol-cuerpo">
               <header>
@@ -1278,6 +1279,57 @@ async function pdfResumen(p, opciones) {
   await pdf.terminar(`${nombreCompleto(p)} · Resumen de historia clínica · ${fechaLeg(hoy)}`, `Resumen HC ${nombreParaArchivo(p)} ${hoy}`);
 }
 
+// ---------- Evolución en grande ----------
+// Ventana de lectura con letra más grande; las flechas (o ← →) pasan a la consulta anterior o siguiente.
+function verEvolucion(id, regId) {
+  const p = paciente(id);
+  const evol = [...(p.evoluciones || [])].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+  const i = evol.findIndex(e => e.id === regId);
+  const e = evol[i];
+  if (!e) return;
+  const ant = evol[i - 1], sig = evol[i + 1];
+  const qid = esc(id), ro = S.soloLectura;
+  const medidas = [e.peso && e.peso + ' kg', e.talla && e.talla + ' cm'].filter(Boolean).join(' · ');
+  const fechaLarga = e.fecha ? new Date(e.fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'Sin fecha';
+  const dlg = $('#lectura');
+  dlg.innerHTML = `
+    <div class="lectura-cab">
+      <div class="lectura-titulo">
+        <p class="lectura-paciente">${esc(nombreCompleto(p))}${p.fechaNac && e.fecha ? ' · ' + esc(edadLarga(p.fechaNac, new Date(e.fecha + 'T00:00:00'))) : ''}</p>
+        <h2>${esc(fechaLarga)}</h2>
+        ${e.motivo ? `<p class="lectura-motivo">${esc(e.motivo)}</p>` : ''}
+      </div>
+      <button type="button" class="btn-icono" data-accion="lectura-cerrar" title="Cerrar" aria-label="Cerrar"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="lectura-cuerpo">
+      ${fechaDudosa(p, e.fecha) ? '<p><span class="etiqueta aviso">Revisar fecha</span></p>' : ''}
+      ${medidas ? `<section><h3>Peso / talla</h3><p>${esc(medidas)}</p></section>` : ''}
+      ${e.texto ? `<section><h3>Evolución</h3><p class="pre">${esc(e.texto)}</p></section>` : ''}
+      ${APARTADOS_EVOLUCION.filter(([k]) => e[k]).map(([k, t]) => `<section><h3>${t}</h3><p class="pre">${esc(e[k])}</p></section>`).join('')}
+      ${!medidas && !e.texto && !APARTADOS_EVOLUCION.some(([k]) => e[k]) ? '<p class="vacio">Esta evolución no tiene texto.</p>' : ''}
+    </div>
+    <div class="lectura-pie">
+      <button type="button" class="btn chico" data-accion="lectura-ir" data-id="${qid}" data-reg="${esc(ant?.id || '')}" ${ant ? '' : 'disabled'}><span class="girar">${ICONO.siguiente}</span><span>Anterior</span></button>
+      <span class="suave chico lectura-pos">${i + 1} de ${evol.length}</span>
+      <button type="button" class="btn chico" data-accion="lectura-ir" data-id="${qid}" data-reg="${esc(sig?.id || '')}" ${sig ? '' : 'disabled'}><span>Siguiente</span>${ICONO.siguiente}</button>
+      <span class="lectura-acciones">
+        <button type="button" class="btn chico" data-accion="pdf-evolucion" data-id="${qid}" data-reg="${esc(e.id)}">${ICONO.compartir}<span>PDF</span></button>
+        ${ro ? '' : `<button type="button" class="btn chico" data-accion="lectura-editar" data-id="${qid}" data-reg="${esc(e.id)}">${ICONO.editar}<span>Editar</span></button>`}
+      </span>
+    </div>`;
+  dlg.dataset.ant = ant?.id || ''; dlg.dataset.sig = sig?.id || ''; dlg.dataset.paciente = id;
+  if (!dlg.open) dlg.showModal();
+  $('.lectura-cuerpo', dlg).scrollTop = 0;
+}
+
+// Las flechas del teclado pasan de consulta mientras la ventana de lectura está abierta.
+document.addEventListener('keydown', ev => {
+  const dlg = $('#lectura');
+  if (!dlg.open || ev.target.closest?.('input, textarea, select')) return;
+  const destino = ev.key === 'ArrowLeft' ? dlg.dataset.ant : ev.key === 'ArrowRight' ? dlg.dataset.sig : '';
+  if (destino) { ev.preventDefault(); verEvolucion(dlg.dataset.paciente, destino); }
+});
+
 function borrarPaciente(p) {
   const n = prompt(`Para eliminar a ${nombreCompleto(p)} con todas sus evoluciones y estudios, escribí ELIMINAR:`);
   if (!n || n.trim().toUpperCase() !== 'ELIMINAR') return false;
@@ -1819,6 +1871,12 @@ document.addEventListener('click', ev => {
     case 'editar-estudio': editarRegistro(id, 'estudios', reg); break;
     case 'filtro-estudio': filtroEstudio[id] = tipo; mostrar(); break;
     case 'imprimir': print(); break;
+    case 'ver-evolucion':
+      if (getSelection().toString()) break; // si estaba seleccionando texto para copiar, no abrir
+      verEvolucion(id, reg); break;
+    case 'lectura-ir': verEvolucion(id, reg); break;
+    case 'lectura-cerrar': $('#lectura').close(); break;
+    case 'lectura-editar': $('#lectura').close(); editarRegistro(id, 'evoluciones', reg); break;
     case 'pdf-evolucion': pdfEvolucion(paciente(id), (paciente(id).evoluciones || []).find(e => e.id === reg), b); break;
     case 'editar-encabezado': editarEncabezado(); break;
     case 'dibujar-firma': dibujarFirma(); break;
