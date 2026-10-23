@@ -557,7 +557,7 @@ function vistaInicio() {
     <label class="caja-busqueda grande">${ICONO.buscar}<input type="search" id="q" placeholder="Buscar paciente, N° o diagnóstico…" value="${esc(busqueda)}" autocomplete="off" aria-label="Buscar"></label>
     <div class="acciones-inicio">
       ${ro ? '' : `<button class="btn primario" data-accion="nuevo-paciente">${ICONO.mas}<span>Paciente nuevo</span></button>`}
-      <a class="btn" href="#/todos">Todos<span class="solo-pc">&nbsp;los pacientes</span> <span class="cuenta">${S.db.pacientes.length}</span></a>
+      <a class="btn" href="#/todos"><span>Todos<span class="solo-pc"> los pacientes</span></span><span class="cuenta">${S.db.pacientes.length}</span></a>
     </div>
     <div id="resultados"></div>
   </div>`;
