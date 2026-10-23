@@ -256,7 +256,8 @@ async function adjuntarArchivos(p, archivos, datos, aviso) {
     aviso(archivos.length > 1 ? `Subiendo ${i + 1} de ${archivos.length}: ${f.name}…` : `Subiendo ${f.name}…`);
     const { bytes, tipo, nombre } = await prepararArchivo(f);
     const id = nuevoId();
-    await Adjuntos.subir(id, await cifrarBytes(bytes));
+    try { await Adjuntos.subir(id, await cifrarBytes(bytes)); }
+    catch (e) { throw new Error(`No se pudo subir «${f.name}»: ${e.message}`); }
     p.adjuntos.push(Object.assign({ id, nombre, tipo, tam: bytes.byteLength, creado: new Date().toISOString() }, datos));
   }
 }
@@ -825,7 +826,7 @@ function formulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBo
     err.classList.add('progreso-texto');
     let error;
     try { error = await onGuardar(datos, texto => { err.textContent = texto; }); }
-    catch (e) { console.error(e); error = 'No se pudo subir: ' + e.message; }
+    catch (e) { console.error(e); error = e.message; }
     botones.forEach(b => { b.disabled = false; });
     err.classList.remove('progreso-texto');
     if (error) { err.textContent = error; return; }
@@ -927,7 +928,8 @@ $('#visor').addEventListener('close', () => {
 });
 
 // ---------- PDF de una evolución para compartir ----------
-const ENCABEZADO_INICIAL = { nombre: 'Dr. Sebastián Maldonado', especialidad: 'Cardiología y electrofisiología', matricula: '', contacto: '' };
+// Vacío a propósito: la app la pueden usar otros médicos, y cada uno pone su encabezado en Ajustes.
+const ENCABEZADO_INICIAL = { nombre: '', especialidad: '', matricula: '', contacto: '' };
 const lineasEncabezado = () => {
   const e = Object.assign({}, ENCABEZADO_INICIAL, S.db.encabezado);
   return [e.nombre, e.especialidad, e.matricula, e.contacto].filter(Boolean);
@@ -956,6 +958,7 @@ const cargarJsPDF = () => cargaJsPDF ||= new Promise((ok, mal) => {
 
 // Arma un PDF A4 con el encabezado del médico; devuelve funciones para ir escribiendo de arriba hacia abajo.
 async function nuevoPDF(titulo, fecha) {
+  if (!lineasEncabezado().length) throw new Error('Primero completá tu nombre y matrícula en Ajustes → Encabezado de los PDF.');
   const jsPDF = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const M = 20, ANCHO = 210 - 2 * M, ALTO_UTIL = 297 - 22;
@@ -1388,7 +1391,8 @@ function vistaAjustes() {
   <div class="tarjeta">
     <h2>Encabezado de los PDF</h2>
     <p class="chico suave">Aparece arriba de las evoluciones que descargás o compartís en PDF.</p>
-    <p class="pre" style="margin:0 0 12px">${esc(lineasEncabezado().join('\n'))}</p>
+    ${lineasEncabezado().length ? `<p class="pre" style="margin:0 0 12px">${esc(lineasEncabezado().join('\n'))}</p>`
+      : '<p class="error-texto" style="margin:0 0 12px">Todavía no completaste tu nombre y matrícula: hacen falta para los PDF.</p>'}
     <button class="btn" data-accion="editar-encabezado">Editar encabezado</button>
     <h3 style="margin-top:20px">Firma</h3>
     <p class="chico suave">Va arriba de la línea de firma en las evoluciones y resúmenes en PDF.

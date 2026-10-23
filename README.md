@@ -31,6 +31,14 @@ búsqueda, impresión a PDF e importación de las historias en Word (.docx).
 4. Abrí la app, tocá **Conectar con Dropbox**, autorizá y creá la contraseña.
 5. En el celular: abrí la misma dirección, conectá Dropbox, ingresá la contraseña y agregala a la pantalla de inicio.
 
+## Uso por otros médicos
+
+Cualquier colega puede usar la misma dirección con **su propio Dropbox y su propia contraseña**: los datos de cada uno
+quedan cifrados en su Dropbox y nunca se cruzan. Para habilitarlo, en la consola de Dropbox de la app
+(*Settings → Development users*) hay que tocar **Enable additional users** (permite hasta 500 usuarios).
+Cada médico completa su nombre, matrícula y firma en *Ajustes → Encabezado de los PDF*.
+Los cambios que se hagan en este repositorio les llegan a todos.
+
 ## Importar las historias de Word
 
 *Ajustes → Importar historias de Word*: se eligen todos los `.docx` juntos. El nombre del archivo (por ejemplo `245.docx`)
