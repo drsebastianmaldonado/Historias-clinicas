@@ -567,16 +567,24 @@ function vistaInicio() {
   dibujarInicio();
   if (matchMedia('(min-width: 601px)').matches) $('#q').focus();
 }
+// Cuándo se cargó o editó por última vez una evolución en la app (las traídas de Word sin tocar no cuentan).
+const ultimaCarga = p => (p.evoluciones || []).reduce((m, e) => {
+  const t = e.modificado || (e.importada ? '' : e.creado) || '';
+  return t > m ? t : m;
+}, '');
+
 function dibujarInicio() {
   if (normalizar(busqueda).trim()) return dibujarResultados();
   const el = $('#resultados');
   if (!S.db.pacientes.length) return dibujarResultados(); // muestra cómo empezar
-  const vistos = recientes.leer().map(paciente).filter(Boolean).slice(0, 6);
-  const lista = vistos.length ? vistos
+  const evolucionados = S.db.pacientes.filter(ultimaCarga).sort((a, b) => ultimaCarga(b).localeCompare(ultimaCarga(a))).slice(0, 8);
+  const vistos = recientes.leer().map(paciente).filter(p => p && !evolucionados.includes(p)).slice(0, 4);
+  const consultas = evolucionados.length || vistos.length ? []
     : [...S.db.pacientes].filter(p => ultimaFecha(p)).sort((a, b) => ultimaFecha(b).localeCompare(ultimaFecha(a))).slice(0, 6);
-  el.innerHTML = lista.length ? `
-    <p class="subtitulo-lista">${vistos.length ? 'Vistos recientemente' : 'Últimas consultas'}</p>
-    <ul class="lista">${lista.map(filaPaciente).join('')}</ul>` : '';
+  const bloque = (titulo, lista) => lista.length ? `<p class="subtitulo-lista">${titulo}</p><ul class="lista">${lista.map(filaPaciente).join('')}</ul>` : '';
+  el.innerHTML = bloque('Últimos evolucionados', evolucionados)
+    + (vistos.length ? `<div style="margin-top:22px">${bloque('Vistos recientemente', vistos)}</div>` : '')
+    + bloque('Últimas consultas', consultas);
 }
 
 function vistaLista() {
