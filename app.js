@@ -746,9 +746,15 @@ function vistaPaciente(id) {
 
       ${p.historiaImportada ? `
       <section class="tarjeta seccion-historia">
+        ${ro ? '' : `<button class="btn-icono no-imprimir editar-historia" data-accion="editar-historia" data-id="${qid}" title="Editar la historia original" aria-label="Editar la historia original">${ICONO.editar}</button>`}
         <details ${p.evoluciones?.length ? '' : 'open'}>
-          <summary>${ICONO.documento}<span>Historia original completa${p.importado?.archivo ? `<small>${esc(p.importado.archivo)}</small>` : ''}</span></summary>
+          <summary>${ICONO.documento}<span>Historia original completa${p.importado?.archivo ? `<small>${esc(p.importado.archivo)}${p.historiaEditada ? ' · editada en la app' : ''}</small>` : ''}</span></summary>
           <div class="importada">${limpiarHTML(p.historiaImportada)}</div>
+          <div class="barra-edicion no-imprimir" hidden>
+            <span class="chico suave">Estás editando la historia original. Las evoluciones separadas no cambian.</span>
+            <button class="btn chico" data-accion="cancelar-historia">Cancelar</button>
+            <button class="btn primario chico" data-accion="guardar-historia" data-id="${qid}">Guardar</button>
+          </div>
         </details>
       </section>` : ''}
     </div>
@@ -1831,7 +1837,7 @@ async function importarWord(archivos) {
       const importado = { archivo: f.name, fecha: new Date().toISOString() };
       const existente = porNumero.get(numero);
       if (existente) {
-        existente.historiaImportada = limpiarHTML(html);
+        if (!existente.historiaEditada) existente.historiaImportada = limpiarHTML(html);
         existente.importado = importado;
         textoImportado.delete(existente);
         for (const [k, v] of Object.entries(datos)) if (!existente[k] || k === 'ultimaConsultaImportada') existente[k] = v;
@@ -1873,6 +1879,27 @@ document.addEventListener('click', ev => {
     case 'nuevo-paciente': editarPaciente(null); break;
     case 'editar-paciente': editarPaciente(id); break;
     case 'editar-resumen': editarResumenClinico(id); break;
+    case 'editar-historia': {
+      // Se edita en el lugar (conserva negritas y tablas); al guardar se vuelve a limpiar el HTML.
+      const sec = b.closest('.seccion-historia'), cont = $('.importada', sec);
+      $('details', sec).open = true;
+      cont.contentEditable = 'true';
+      cont.classList.add('editando');
+      $('.barra-edicion', sec).hidden = false;
+      b.hidden = true;
+      cont.focus();
+      break;
+    }
+    case 'cancelar-historia': mostrar(); break;
+    case 'guardar-historia': {
+      const p = paciente(id), cont = $('.importada', b.closest('.seccion-historia'));
+      p.historiaImportada = limpiarHTML(cont.innerHTML);
+      p.historiaEditada = true;
+      p.modificado = new Date().toISOString();
+      textoImportado.delete(p);
+      guardar(); mostrar();
+      break;
+    }
     case 'nueva-evolucion': editarRegistro(id, 'evoluciones'); break;
     case 'editar-evolucion': editarRegistro(id, 'evoluciones', reg); break;
     case 'nuevo-estudio': editarRegistro(id, 'estudios'); break;

@@ -275,6 +275,11 @@ details > summary { cursor: pointer; font-weight: 600; }
 .importada p { margin: 0 0 6px; }
 .importada table { border-collapse: collapse; max-width: 100%; display: block; overflow-x: auto; }
 .importada td, .importada th { border: 1px solid var(--borde); padding: 4px 6px; vertical-align: top; }
+.seccion-historia { position: relative; }
+.editar-historia { position: absolute; top: 18px; right: 52px; z-index: 1; }
+.importada.editando { outline: 2px solid var(--primario); outline-offset: 6px; border-radius: 4px; padding: 6px; min-height: 120px; }
+.barra-edicion { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; position: sticky; bottom: 0; margin-top: 14px; padding: 12px 0 4px; background: var(--panel); border-top: 1px solid var(--borde); }
+.barra-edicion .suave { flex: 1; min-width: 200px; }
 .pie-ficha { text-align: right; margin: 4px 0 24px; }
 
 /* ---------- Evolución en grande ---------- */
